@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use std::sync::{Arc, atomic::AtomicBool};
 #[derive(Clone)]
 pub struct AppState {
+    pub students: crate::modules::learning::application::StudentService,
     pub identity: AdminIdentity,
     pub sessions: SessionService,
     pub schools: SchoolService,

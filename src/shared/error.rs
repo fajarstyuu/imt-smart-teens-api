@@ -13,6 +13,11 @@ pub enum AppError {
     NotFound,
     #[error("{0}")]
     Conflict(&'static str),
+    #[error("{code}")]
+    ConflictDetails {
+        code: &'static str,
+        details: serde_json::Value,
+    },
     #[error("dependency unavailable")]
     Unavailable,
     #[error("internal failure")]

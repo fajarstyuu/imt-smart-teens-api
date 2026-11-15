@@ -40,6 +40,19 @@ pub async fn csrf_context(
     response
         .headers_mut()
         .append(header::SET_COOKIE, state.csrf.cookie(&token)?);
+    // Stable, signed browser-operation scope survives login CSRF rotations. It is not authentication.
+    let browser = cookie(&headers, "imt_enrollment_context")
+        .filter(|s| state.csrf.valid(s))
+        .unwrap_or(&token);
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        cookie_value(
+            "imt_enrollment_context",
+            browser,
+            7200,
+            state.settings.session.secure,
+        )?,
+    );
     Ok(response)
 }
 pub async fn admin_login(

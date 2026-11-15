@@ -49,7 +49,9 @@ async fn private_cli_migrates_provisions_and_serves_with_graceful_sigterm(pool: 
             .fetch_one(&pool)
             .await
             .unwrap(),
-        3
+        imt_smart_teens_backend::platform::database::MIGRATOR
+            .iter()
+            .count() as i64
     );
     let mut provision = command(&url);
     provision

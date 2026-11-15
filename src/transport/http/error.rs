@@ -11,12 +11,14 @@ pub struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: &'static str,
+    details: Option<serde_json::Value>,
 }
 impl ApiError {
     pub fn transport(status: StatusCode, code: &'static str) -> Self {
         Self {
             status,
             code,
+            details: None,
             message: match status {
                 StatusCode::BAD_REQUEST => "Permintaan tidak valid.",
                 StatusCode::PAYLOAD_TOO_LARGE => "Data terlalu besar.",
@@ -33,6 +35,14 @@ impl ApiError {
 impl From<AppError> for ApiError {
     fn from(value: AppError) -> Self {
         let (status, code, message) = match value {
+            AppError::ConflictDetails { code, details } => {
+                return Self {
+                    status: StatusCode::CONFLICT,
+                    code,
+                    details: Some(details),
+                    message: "Data telah berubah. Muat ulang sebelum menyimpan.",
+                };
+            }
             AppError::Invalid(code) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 code,
@@ -76,6 +86,7 @@ impl From<AppError> for ApiError {
             status,
             code,
             message,
+            details: None,
         }
     }
 }
@@ -84,12 +95,11 @@ impl IntoResponse for ApiError {
         let request_id = REQUEST_ID
             .try_with(Clone::clone)
             .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
-        (
-            self.status,
-            Json(
-                json!({"error":{"code":self.code,"message":self.message},"request_id":request_id}),
-            ),
-        )
-            .into_response()
+        let mut body =
+            json!({"error":{"code":self.code,"message":self.message},"request_id":request_id});
+        if let Some(details) = self.details {
+            body["error"]["details"] = details;
+        }
+        (self.status, Json(body)).into_response()
     }
 }

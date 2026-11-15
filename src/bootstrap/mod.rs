@@ -33,6 +33,12 @@ pub async fn assemble(pool: PgPool, settings: Settings) -> Result<AppState> {
         .hash("non-account-constant-time-verification-only".into())
         .await?;
     Ok(AppState {
+        students: crate::modules::learning::application::StudentService::new(
+            Arc::new(
+                crate::modules::learning::infrastructure::PgStudentUnitOfWork::new(pool.clone()),
+            ),
+            sessions.clone(),
+        ),
         identity: AdminIdentity::new(identities, passwords, sessions.clone(), dummy_hash),
         sessions,
         schools: SchoolService::new(Arc::new(PgSchoolStore::new(pool.clone()))),
