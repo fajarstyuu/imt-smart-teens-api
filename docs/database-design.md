@@ -95,5 +95,3 @@ Use one database initially, context-prefixed tables in `public`; reporting reads
 ### Planned migrations (later milestone; do not create/run now)
 
 `migrations/202611150001_identity_content.sql`: schools/students/admins/grants, lesson/question/bank immutable structures and draft roots. `202611150002_enrollment_assessment.sql`: path versions/items, enrollments, snapshots, attempts/answers/options, progress/visits, sessions (after enrollment exists). `202611150003_measurements_operations.sql`: measurements, idempotency, audit, query indexes. Within each migration order tables so referenced keys exist first; circular dependencies use explicit later ALTER TABLE. Keep migrations append-only once shared. No seed with public admin credentials. Use distinct migrator (DDL) and application (DML-only) roles before connecting a real API.
-
-

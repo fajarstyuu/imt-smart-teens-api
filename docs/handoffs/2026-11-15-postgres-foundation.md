@@ -1,10 +1,10 @@
 # postgres-foundation — Local PostgreSQL and backend contract design
 
 - Date (Asia/Jakarta): 2026-11-15
-- Status: ready_for_review
+- Status: completed
 - Context / objective: Implement the approved PostgreSQL-first plan, API inventory and database design, including admin terminology and school CMS.
 - Owner / implementor: Mochi, inline gpt-6.1-sol; exact reasoning effort unknown.
-- Reviewer: pending independent read-only review.
+- Reviewer: independent read-only agent sa-0-d570891f (delegation deleg_44bbeccd); actual child model/effort unknown from returned metadata. Parent performed final acceptance after verification.
 - Delegation evidence: no Luna implementation was dispatched. The owner explicitly requested superpowers:executing-plans (inline execution), superseding the earlier implementation routing for this task. Native per-child model/effort selection is unavailable; no model switch is claimed.
 
 ## Scope and contracts
@@ -44,6 +44,25 @@
 
 ## Review and next steps
 
-- Review status: pending.
-- Next: independent read-only whole-branch review, address material findings with RED/GREEN tests, run final verification and finalize this handoff. No push/merge authorized.
+- Review status: accepted for the development milestone with two deferred minor test-hardening findings.
+- Reviewer range: 40bb0f5b61cfd7b4c0a69d4dd141bc5818a63389..19f25c648e305520069afbc6f9135acf6cf258cc. Reported no Critical/Important issues.
+- Parent confirmed committed EOF-whitespace failures, treated them as a verification-gate defect, normalized both design documents, and re-ran the full suite/runtime smoke. A clean worktree alone is not branch whitespace verification: final checks use `git diff --check 40bb0f5b61cfd7b4c0a69d4dd141bc5818a63389..HEAD`.
+- Deferred minor: add a permanent missing/unset-password configuration test; current test covers empty and reviewer independently verified unset rejection.
+- Deferred minor: smoke should discriminate password-authentication rejection from unrelated exec/network failures. Current live PostgreSQL auth was independently verified by the reviewer; this is remaining regression-test hardening, not observed trust authentication.
+- Reviewer declined runtime recreation (read-only assignment); parent reran persistence through recreation successfully after review. HTTP/schema/frontend behavior and production readiness remain explicitly unimplemented/outside scope.
+- Final observed runtime: PostgreSQL 17.12, healthy; public business table count 0; leftover smoke schema count 0; Docker/nginx active; full 3-test configuration suite passed and Bash syntax passed.
+- Next: owner chooses local merge, push/PR (requires GitHub access), or keep branch. No push/merge performed. The next product milestone must implement SQLx migrations and Rust/API contracts before frontend integration.
 - Remaining production gates: least-privilege roles, backup/restore, retention/access administration, deployment hardening.
+
+## Rulings made during execution
+
+- Ruling: user explicitly chose superpowers:executing-plans (inline), overriding the earlier Luna-only implementation route for this task — implement as actual gpt-6.1-sol, exact reasoning effort unknown; never claim Luna/high routing — cost if wrong: requires owner clarification and implementation attribution review, not silent model substitution.
+- Ruling: keep .worktrees/ ignored through local .git/info/exclude rather than commit on main — preserves clean untouched main while satisfying isolation — cost if wrong: other clones need their own local ignore setup.
+- Ruling: use sudo for daemon operations and smoke tests, not docker group membership — approved installation does not authorize root-equivalent group grants — cost if wrong: documented commands require sudo on this host.
+- Ruling: preserve real frontend useTeacherData.ts path (plan's evidence line says useAdminData.ts after broad rename) — actual source remains teacher-named — cost if wrong: documentation path correction only.
+- Ruling: PostgreSQL infrastructure and API/database design only, no 28-table migration or Rust CMS in this milestone — matches approved plan's explicit scope — cost if wrong: requires a separately scoped follow-up implementation.
+- Final: Ruling: re-grade committed-range whitespace as a completion-gate defect and normalize documentation EOFs — plan requires a clean diff and unqualified clean-worktree checks missed committed errors — cost if wrong: documentation-only normalization; no runtime behavior changes.
+- Final: Ruling: accept read-only review's decision not to recreate the database — parent independently reran the actual opt-in smoke and cleanup successfully — cost if wrong: repeatable dev-container interruption, never proof of production safety.
+- Final: Ruling: HTTP/business constraints/frontend integration are not executed in this milestone — no corresponding implementation exists and documentation says so — cost if wrong: requires a new implementation/testing milestone, cannot deploy app from this branch.
+- Final: Ruling: production readiness remains outside scope — local superuser, backups, secret/network policy need separate work — cost if wrong: this development configuration must not be promoted directly to production.
+- Ruling: spell out composite referenced UNIQUE tuples for section visits and answer-option snapshot ownership — PostgreSQL composite FKs need matching keys — cost if wrong: later migration review must adjust these proposed constraints.

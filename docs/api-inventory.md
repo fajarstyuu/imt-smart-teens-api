@@ -119,4 +119,3 @@ Current paths below have `/api` prefix. They remain development-only; no legacy 
 | `PUT /teacher/order {ids}` | learning-path draft order + explicit publication |
 
 Future frontend ownership: `web/src/services/api.ts`, `web/src/services/http.ts`, `web/src/services/contracts.ts`, `web/src/domain/types.ts`, `web/src/hooks/useAssessment.ts`, `web/src/pages/TeacherResultsPage.tsx`, `web/src/pages/TeacherContentPages.tsx`, relevant tests. This list is a follow-up boundary, NOT authorization to edit now. Replace token storage with `credentials:'include'`, CSRF header handling, envelope/error mapping and revisions in that follow-up. Never copy the development admin password or return Node fixtures as production data.
-
