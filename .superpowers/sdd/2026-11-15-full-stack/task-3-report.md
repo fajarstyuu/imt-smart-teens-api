@@ -148,6 +148,27 @@ Owned changed groups: src/modules/learning/admin/*; src/modules/assessment/admin
 - Before refactor, new real HTTP nested-schema/history/publication/null assertions and expanded pending/graded report-schema/number assertions passed as characterization (`task3-fix-wire-baseline.log`:4 tests). These protect compatibility; they are not claimed failing runtime tests. The review finding is the previous `Value` return contract; the static handler and mapper types now enforce the requested schema.
 - Focused post-refactor `cargo test --locked --test cms_response_contract --test reporting --test admin_content --test cms_workflow --test cms_concurrency --test publication_policy -- --test-threads=1`:16 passed,0 failed/ignored (`task3-fix-dto-green.log`). Existing assertions were retained; full final gates remain pending at this checkpoint.
 
+## Fix round1 final verification and review handoff
+
+- Stable correction commits: `a67fd3b` application-owned admission/transaction ports; `e7da567` explicit CMS/report HTTP schemas and wire assertions. Final documentation/evidence commit follows these two. Parent owns scoped independent re-review and Task3 acceptance.
+- Supplemental regression probes (not initial TDD claims): disabling archived-question rejection in `PublishedBank::admit` failed the typed policy test with `accepted malformed case 1` (`task3-fix-probe-archive-red.log`); adding skip-on-null serialization for report correctness failed the new exact pending-response key-set assertion (`task3-fix-probe-null-schema-red.log`). Both production changes were restored before final gates. The first inverse patch could not match an empty deletion and was immediately restored with an anchored patch; no mutant code remains.
+- Final tool environment: PATH=/home/ubuntu/.cargo/bin:$PATH, CARGO_BUILD_JOBS=1, dev/test debug0, private ignored `.env.test`, serial real PostgreSQL integrations. No secret contents/URLs/passwords/tokens printed, no application DB changes or migration edits.
+
+| Final command | Actual result | Evidence |
+| --- | --- | --- |
+| `cargo fmt --all --check` | exit0, clean | task3-fix-final-fmt.log |
+| `cargo clippy --all-targets --all-features --locked -- -D warnings` | exit0, no warnings | task3-fix-final-clippy.log |
+| `cargo test --all-targets --locked -- --test-threads=1` | exit0,65 passed,0 failed,0 ignored | task3-fix-final-tests.log |
+| `cargo build --locked` | exit0 | task3-fix-final-build.log |
+| `python3 -m unittest discover -s tests/infra -p 'test_*.py' -v` | exit0,3 passed | task3-fix-final-infra.log |
+| `git diff --check 5ca68707def2820d07d5ff28c4668348f0d14e1e..HEAD` | clean; rechecked after final commit | final tool output / task3-fix-final-range.log |
+
+65 Rust tests = preserved62 plus2 typed published-bank policy tests and1 real PostgreSQL HTTP editor schema/history/publication test. Existing reporting tests gained nested response presence/null/number/selection/privacy assertions; no existing test or assertion removed/weakened. Final full suite included real bank publication/order races, invalid persisted drafts, exact aggregate admission budget rejection, bank/path audit rollback and HTTP-authored historical student/reporting workflow after later publications/archive. No source changed after these gates; final commit adds contracts/evidence only.
+
+Owned correction paths: assessment admin application/infrastructure plus their published-facts modules; learning admin application/infrastructure plus their path-publication modules; the three Task3 presentation modules and concrete DTO modules; common HTTP editorial envelopes/history DTO; two new focused test targets and expanded reporting assertions; `docs/runtime-contract.md`; this appended report. No frontend/rules/foundation/host/nginx/Docker/env/credential/appDB/migrations1–5 changes, no nested agents, push/merge/rollout. Parent-owned concurrent `docs/handoffs/2026-11-15-full-stack.md` remains untouched and unstaged.
+
+Wire contract remains exactly the existing20 routes/envelopes/statuses/field names/types/nullability/precision/order/privacy. Runtime-contract additions explain the new application boundary/one-transaction topology and concrete HTTP DTO ownership, not a wire migration. Remaining concern: previously deferred Minor3 detail-read snapshot consistency stays deferred to the parent/final review; no extra gate or unsolicited fix was added. No blocking issue or skipped required verification remains in this correction scope. Ready for scoped independent review, **not** self-accepted Task3.
+
 ## Concerns and next owner
 
 No functional blocker or skipped required gate remains. Ready for the parent's independent **Task3** review; this is not Task3 acceptance or whole-app completion. Frontend integration, real operational school-grant assignment, deployment/migrations against an application database and rollout remain outside this task. Per-enrollment result histories are intentionally not top-level paginated (matching inventory); answer listings remain bounded. No public content seed/import or arbitrary historical path-version override was invented. Production bootstrap/content governance remains explicit rather than automatic.
