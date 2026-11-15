@@ -16,6 +16,276 @@ async fn editor(pool: &PgPool) -> (axum::Router, String, String) {
     let (c, t) = login(&app, id).await;
     (app, c, t)
 }
+fn question(text: &str, typ: &str, position: i32) -> Value {
+    let a = Uuid::new_v4();
+    let b = Uuid::new_v4();
+    json!({"text":text,"type":typ,"options":[{"id":a,"text":"One"},{"id":b,"text":"Two"}],"correct_option_ids":if typ=="single"{vec![a]}else{vec![a,b]},"position":position,"required":true})
+}
+#[sqlx::test(migrations = "./migrations")]
+async fn questions_bank_publication_versions_keys_and_revisions(pool: PgPool) {
+    roots(&pool).await;
+    let (app, c, t) = editor(&pool).await;
+    let (s, v, _) = request(
+        &app,
+        "GET",
+        "/api/v1/admin/question-banks",
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 200, "banks list: {v}");
+    assert_eq!(v["meta"]["total"], 2);
+    let bank = v["data"][0]["id"].as_str().unwrap();
+    let base = format!("/api/v1/admin/question-banks/{bank}");
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &format!("{base}/publication"),
+            json!({"expected_revision":1}),
+            &c,
+            &t
+        )
+        .await
+        .0,
+        422
+    );
+    let draft = question("Original", "single", 1);
+    let (s, q, _) = request(
+        &app,
+        "POST",
+        &format!("{base}/questions"),
+        draft.clone(),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 201, "question create: {q}");
+    let id = q["data"]["id"].as_str().unwrap();
+    let qpath = format!("{base}/questions/{id}");
+    let (_, banks, _) = request(
+        &app,
+        "GET",
+        "/api/v1/admin/question-banks",
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(banks["data"][0]["revision"], 2);
+    let (s, b, _) = request(
+        &app,
+        "POST",
+        &format!("{base}/publication"),
+        json!({"expected_revision":2}),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 200, "bank publish: {b}");
+    assert_eq!(b["data"]["revision"], 3);
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &format!("{base}/publication"),
+            json!({"expected_revision":2}),
+            &c,
+            &t
+        )
+        .await
+        .0,
+        409
+    );
+    let (_, first, _) = request(&app, "GET", &qpath, json!(null), &c, &t).await;
+    let v1 = first["data"]["versions"][0]["id"].clone();
+    assert_eq!(first["data"]["revision"], 2);
+    let mut changed = draft.clone();
+    changed["text"] = json!("Future");
+    changed["expected_revision"] = json!(2);
+    assert_eq!(
+        request(&app, "PUT", &qpath, changed.clone(), &c, &t)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(request(&app, "PUT", &qpath, changed, &c, &t).await.0, 409);
+    let (s, b, _) = request(
+        &app,
+        "POST",
+        &format!("{base}/publication"),
+        json!({"expected_revision":4}),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 200, "republish: {b}");
+    let (_, now, _) = request(&app, "GET", &qpath, json!(null), &c, &t).await;
+    assert_eq!(now["data"]["versions"].as_array().unwrap().len(), 2);
+    let v2 = now["data"]["versions"][0]["id"].clone();
+    assert_ne!(v1, v2);
+    let ids:Vec<(Uuid,Uuid,bool)>=sqlx::query_as("SELECT id,question_version_id,is_correct FROM assessment_options ORDER BY question_version_id,position").fetch_all(&pool).await.unwrap();
+    assert_eq!(ids.len(), 4);
+    assert_eq!(
+        ids.iter()
+            .map(|x| x.0)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        4
+    );
+    assert!(!ids.iter().any(|x| json!(x.0) == draft["options"][0]["id"]));
+    for v in [v1.clone(), v2] {
+        let v: Uuid = serde_json::from_value(v).unwrap();
+        assert_eq!(ids.iter().filter(|x| x.1 == v && x.2).count(), 1);
+    }
+    let text: String =
+        sqlx::query_scalar("SELECT text FROM assessment_question_versions WHERE id=$1")
+            .bind(serde_json::from_value::<Uuid>(v1).unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(text, "Original");
+    let (s, v, _) = request(
+        &app,
+        "POST",
+        &format!("{qpath}/archive"),
+        json!({"expected_revision":4}),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v, _) = request(
+        &app,
+        "GET",
+        &format!("{base}/questions?status=archived&limit=1"),
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(v["meta"]["total"], 1);
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &format!("{base}/publication"),
+            json!({"expected_revision":6}),
+            &c,
+            &t
+        )
+        .await
+        .0,
+        422
+    );
+}
+#[sqlx::test(migrations = "./migrations")]
+async fn question_validation_bank_ownership_and_transactional_publication(pool: PgPool) {
+    roots(&pool).await;
+    let (app, c, t) = editor(&pool).await;
+    let (status, banks, _) = request(
+        &app,
+        "GET",
+        "/api/v1/admin/question-banks",
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(status, 200, "banks: {banks}");
+    let bank = banks["data"][0]["id"].as_str().unwrap();
+    let other = banks["data"][1]["id"].as_str().unwrap();
+    let base = format!("/api/v1/admin/question-banks/{bank}");
+    for invalid in [
+        "empty",
+        "duplicate",
+        "foreign",
+        "single",
+        "blank",
+        "required",
+        "html",
+    ] {
+        let mut q = question("Question", "single", 1);
+        match invalid {
+            "empty" => q["options"] = json!([]),
+            "duplicate" => q["options"][1]["id"] = q["options"][0]["id"].clone(),
+            "foreign" => q["correct_option_ids"] = json!([Uuid::new_v4()]),
+            "single" => {
+                q["correct_option_ids"] = json!([q["options"][0]["id"], q["options"][1]["id"]])
+            }
+            "blank" => q["options"][0]["text"] = json!(" "),
+            "required" => q["required"] = json!(false),
+            _ => q["text"] = json!("<script>bad</script>"),
+        }
+        assert_eq!(
+            request(&app, "POST", &format!("{base}/questions"), q, &c, &t)
+                .await
+                .0,
+            422,
+            "accepted {invalid}"
+        );
+    }
+    let (_, q, _) = request(
+        &app,
+        "POST",
+        &format!("{base}/questions"),
+        question("Valid", "multiple", 1),
+        &c,
+        &t,
+    )
+    .await;
+    let id = q["data"]["id"].as_str().unwrap();
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            &format!("/api/v1/admin/question-banks/{other}/questions/{id}"),
+            json!(null),
+            &c,
+            &t
+        )
+        .await
+        .0,
+        404
+    );
+    sqlx::raw_sql("CREATE FUNCTION fail_bank_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='bank.publish' THEN RAISE EXCEPTION 'synthetic'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_bank_audit BEFORE INSERT ON platform_audit_events FOR EACH ROW EXECUTE FUNCTION fail_bank_audit()").execute(&pool).await.unwrap();
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &format!("{base}/publication"),
+            json!({"expected_revision":2}),
+            &c,
+            &t
+        )
+        .await
+        .0,
+        500
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM assessment_question_versions")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM assessment_bank_versions")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM assessment_banks WHERE id=$1")
+            .bind(bank.parse::<Uuid>().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
+}
 async fn roots(pool: &PgPool) {
     for kind in ["paired", "quiz"] {
         sqlx::query("INSERT INTO assessment_banks(id,kind,state) VALUES($1,$2,'draft')")
