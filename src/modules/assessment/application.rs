@@ -12,6 +12,7 @@ use crate::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 impl StudentService {
+    /// Return the enrollment's one attempt, or create it after its stage prerequisite is met.
     pub async fn create_attempt(
         &self,
         scope: StudentScope,
@@ -36,6 +37,7 @@ impl StudentService {
         tx.commit().await?;
         Ok((status, out))
     }
+    /// Restore safe pinned questions and own saved answers; no private key fields are serializable.
     pub async fn attempt(&self, scope: StudentScope, id: Uuid) -> AppResult<AttemptView> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
@@ -57,6 +59,8 @@ impl StudentService {
         tx.commit().await?;
         Ok(out)
     }
+    /// Replace one answer set while open, comparing the committed revision under the attempt lock.
+    /// A conflict includes only the latest student-safe answer, never private scoring data.
     pub async fn save_answer(
         &self,
         scope: StudentScope,
@@ -95,6 +99,8 @@ impl StudentService {
         tx.commit().await?;
         Ok(out)
     }
+    /// Score once and advance durable progress atomically. Lock order: operation, enrollment, attempt.
+    /// Repeats reuse the recorded result; missing required answers roll back every scoring write.
     pub async fn submit(&self, scope: StudentScope, id: Uuid, op: Operation) -> AppResult<Value> {
         let mut tx = self.uow.begin().await?;
         // Reserve the operation before taking business locks. Every retriable mutation follows this order.

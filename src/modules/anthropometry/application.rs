@@ -11,6 +11,7 @@ use crate::{
 };
 use serde_json::{Number, Value, json};
 impl StudentService {
+    /// Validate exact explicit-unit input and record a server-computed result before unlocking post-test.
     pub async fn measure(
         &self,
         scope: StudentScope,
@@ -52,6 +53,7 @@ impl StudentService {
         tx.commit().await?;
         Ok(out)
     }
+    /// Return bounded own history in descending creation/UUID order.
     pub async fn measurements(
         &self,
         scope: StudentScope,

@@ -9,6 +9,32 @@ use crate::{
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 use uuid::Uuid;
+/// Published manifest facts; availability policy belongs here, never inside a SQL expression.
+pub struct PublishedPath {
+    pub id: Uuid,
+    pub paired_bank: Uuid,
+    pub quiz_bank: Uuid,
+    pub paired_kind: String,
+    pub quiz_kind: String,
+    pub lesson_count: i64,
+    pub paired_question_count: i64,
+    pub quiz_question_count: i64,
+}
+impl PublishedPath {
+    /// Reject incomplete/mismatched manifests without creating any enrollment effects.
+    pub fn require_available(&self) -> AppResult<()> {
+        if self.lesson_count > 0
+            && self.paired_question_count > 0
+            && self.quiz_question_count > 0
+            && self.paired_kind == "paired"
+            && self.quiz_kind == "quiz"
+        {
+            Ok(())
+        } else {
+            Err(AppError::Conflict("CONTENT_NOT_AVAILABLE"))
+        }
+    }
+}
 #[derive(Clone, Copy)]
 pub struct StudentScope {
     pub student_id: Uuid,

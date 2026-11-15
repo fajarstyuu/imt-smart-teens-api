@@ -53,58 +53,9 @@ async fn call(
     };
     (status, value, cookies)
 }
-/// Two lessons, each with one required section; one single and one multiple question per bank.
-async fn content(pool: &PgPool) -> (Uuid, Vec<Uuid>) {
-    let school = Uuid::new_v4();
-    sqlx::query("INSERT INTO identity_schools(id,name,normalized_name) VALUES($1,'Synthetic school','synthetic school')").bind(school).execute(pool).await.unwrap();
-    let mut banks = vec![];
-    for kind in ["paired", "quiz"] {
-        let bank = Uuid::new_v4();
-        let version = Uuid::new_v4();
-        banks.push(version);
-        sqlx::query("INSERT INTO assessment_banks(id,kind,state) VALUES($1,$2,'published')")
-            .bind(bank)
-            .bind(kind)
-            .execute(pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO assessment_bank_versions(id,bank_id,version) VALUES($1,$2,1)")
-            .bind(version)
-            .bind(bank)
-            .execute(pool)
-            .await
-            .unwrap();
-        for (index, typ) in ["single", "multiple"].iter().enumerate() {
-            let q = Uuid::new_v4();
-            let v = Uuid::new_v4();
-            sqlx::query("INSERT INTO assessment_questions(id,bank_id,state,draft_payload,position) VALUES($1,$2,'published','{}',$3)").bind(q).bind(bank).bind(index as i32+1).execute(pool).await.unwrap();
-            sqlx::query("INSERT INTO assessment_question_versions(id,question_id,version,text,type,required,scoring_rule,max_points) VALUES($1,$2,1,'Synthetic frozen question',$3,true,'exact_set_v1',1)").bind(v).bind(q).bind(typ).execute(pool).await.unwrap();
-            for position in 1..=3 {
-                sqlx::query("INSERT INTO assessment_options(id,question_version_id,position,text,is_correct) VALUES($1,$2,$3,$4,$5)").bind(Uuid::new_v4()).bind(v).bind(position).bind(format!("Synthetic option {position}")).bind(position==1 || (*typ=="multiple" && position==2)).execute(pool).await.unwrap();
-            }
-            sqlx::query("INSERT INTO assessment_bank_items(bank_version_id,question_version_id,position) VALUES($1,$2,$3)").bind(version).bind(v).bind(index as i32+1).execute(pool).await.unwrap();
-        }
-    }
-    let path = Uuid::new_v4();
-    sqlx::query("INSERT INTO learning_path_versions(id,version,paired_bank_version_id,quiz_bank_version_id) VALUES($1,1,$2,$3)").bind(path).bind(banks[0]).bind(banks[1]).execute(pool).await.unwrap();
-    let mut lessons = vec![];
-    for position in 1..=2 {
-        let lesson = Uuid::new_v4();
-        let version = Uuid::new_v4();
-        lessons.push(lesson);
-        sqlx::query(
-            "INSERT INTO learning_lessons(id,state,draft_payload) VALUES($1,'published','{}')",
-        )
-        .bind(lesson)
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description) VALUES($1,$2,1,'Synthetic lesson','Synthetic description')").bind(version).bind(lesson).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO learning_sections(id,lesson_version_id,section_key,position,title,body,required) VALUES($1,$2,$3,1,'Synthetic section','Protected frozen body',true)").bind(Uuid::new_v4()).bind(version).bind(Uuid::new_v4()).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO learning_path_items(path_version_id,lesson_version_id,position) VALUES($1,$2,$3)").bind(path).bind(version).bind(position).execute(pool).await.unwrap();
-    }
-    (school, lessons)
-}
+#[path = "fixtures/student.rs"]
+mod fixture;
+use fixture::content;
 fn merge_cookie(old: &str, new: &[String]) -> String {
     let mut jar = std::collections::BTreeMap::new();
     for part in old
@@ -344,6 +295,15 @@ async fn full_persisted_student_sequence_and_foreign_ownership(pool: PgPool) {
     answer_all(&app, &c, &t, &pre, false).await;
     let result = submit(&app, &c, &t, &pre, "submit-pre").await;
     assert!(result["score"].is_null());
+    fixture::publish_future(&pool).await;
+    let (new_cookie, new_token, new_enrollment) = enroll(&app, school).await;
+    let newer = attempt(&app, &new_cookie, &new_token, "pre_test").await;
+    assert_eq!(newer["questions"][0]["text"], "Future synthetic question");
+    assert_ne!(newer["snapshot_id"], pre["snapshot_id"]);
+    assert_ne!(
+        new_enrollment["enrollment"]["path_version_id"],
+        result["progress"]["path_version_id"]
+    );
     for (i, lesson) in lessons.iter().enumerate() {
         if i == 0 {
             let (s, _, _) = call(
@@ -470,6 +430,37 @@ async fn full_persisted_student_sequence_and_foreign_ownership(pool: PgPool) {
     assert_eq!(post["snapshot_id"], pre["snapshot_id"]);
     assert_eq!(post["questions"], pre["questions"]);
     answer_all(&app, &c, &t, &post, true).await;
+    // A failure after scoring AND enrollment completion must roll everything back, including reservation.
+    sqlx::raw_sql("CREATE FUNCTION fail_submission_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='attempt.submit' THEN RAISE EXCEPTION 'synthetic submission audit failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER fail_submission_audit BEFORE INSERT ON platform_audit_events FOR EACH ROW EXECUTE FUNCTION fail_submission_audit();").execute(&pool).await.unwrap();
+    let post_id: Uuid = serde_json::from_value(post["id"].clone()).unwrap();
+    let (s, v, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/student/attempts/{post_id}/submission"),
+        json!({}),
+        &c,
+        &t,
+        "post-submit",
+    )
+    .await;
+    assert_eq!(s, 500, "{v}");
+    let(status,completed):(String,bool)=sqlx::query_as("SELECT a.status,e.completed_at IS NOT NULL FROM assessment_attempts a JOIN learning_enrollments e ON e.id=a.enrollment_id WHERE a.id=$1").bind(post_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(status, "in_progress");
+    assert!(!completed);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM assessment_answers WHERE attempt_id=$1 AND earned_points IS NOT NULL").bind(post_id).fetch_one(&pool).await.unwrap(),0);
+    let (s, v, _) = call(
+        &app,
+        "GET",
+        "/api/v1/student/progress",
+        json!(null),
+        &c,
+        &t,
+        "",
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["data"]["current_stage"], "post_test");
+    sqlx::raw_sql("DROP TRIGGER fail_submission_audit ON platform_audit_events; DROP FUNCTION fail_submission_audit();").execute(&pool).await.unwrap();
     assert_eq!(
         submit(&app, &c, &t, &post, "post-submit").await["score"],
         100
@@ -487,6 +478,59 @@ async fn full_persisted_student_sequence_and_foreign_ownership(pool: PgPool) {
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["data"]["scores"]["pre_test"], 0);
     assert_eq!(v["data"]["scores"]["post_test"], 100);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/v1/student/measurements",
+            json!({"weight_kg":61,"height_cm":170}),
+            &c,
+            &t,
+            "too-late"
+        )
+        .await
+        .0,
+        409
+    );
+    // A retry of an already committed measurement is not a new calculator action.
+    let (s, v, _) = call(
+        &app,
+        "POST",
+        "/api/v1/student/measurements",
+        json!({"weight_kg":60.5,"height_cm":170}),
+        &c,
+        &t,
+        "measurement",
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["data"]["id"], mid);
+    let (s, v, _) = call(
+        &app,
+        "GET",
+        "/api/v1/student/measurements",
+        json!(null),
+        &other,
+        &ot,
+        "",
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["meta"]["total"], 0);
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/v1/student/summary",
+            json!(null),
+            &other,
+            &ot,
+            ""
+        )
+        .await
+        .0,
+        409
+    );
     let (s, v, _) = call(
         &app,
         "GET",
@@ -1052,5 +1096,154 @@ async fn simultaneous_registration_replay_has_one_identity(pool: PgPool) {
             .await
             .unwrap(),
         1
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn enrollment_seals_quiz_snapshot_before_quiz_attempt_exists(pool: PgPool) {
+    let (school, _) = content(&pool).await;
+    let app = app(pool.clone()).await;
+    let (_, _, out) = enroll(&app, school).await;
+    let enrollment: Uuid = serde_json::from_value(out["enrollment"]["id"].clone()).unwrap();
+    let snapshot: Uuid = sqlx::query_scalar(
+        "SELECT id FROM assessment_snapshots WHERE enrollment_id=$1 AND kind='quiz'",
+    )
+    .bind(enrollment)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let version:Uuid=sqlx::query_scalar("SELECT question_version_id FROM assessment_snapshot_questions WHERE snapshot_id<>$1 LIMIT 1").bind(snapshot).fetch_one(&pool).await.unwrap();
+    assert!(sqlx::query("INSERT INTO assessment_snapshot_questions(id,snapshot_id,question_version_id,position) VALUES($1,$2,$3,99)").bind(Uuid::new_v4()).bind(snapshot).bind(version).execute(&pool).await.is_err(),"quiz snapshot accepted a late question before quiz creation");
+}
+#[sqlx::test(migrations = "./migrations")]
+async fn malformed_school_uuid_is_transport_error(pool: PgPool) {
+    let app = app(pool).await;
+    let (c, t) = csrf(&app).await;
+    let (s, v, _) = call(
+        &app,
+        "POST",
+        "/api/v1/student/sessions",
+        json!({"name":"Student","school_id":"not-a-uuid","form_date":"2026-11-15"}),
+        &c,
+        &t,
+        "bad",
+    )
+    .await;
+    assert_eq!(s, 400, "{v}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn student_rotation_uses_admin_then_student_session_lock_order(pool: PgPool) {
+    let (school, _) = content(&pool).await;
+    let aid = admin(&pool, true).await;
+    let app = app(pool.clone()).await;
+    let (ac, at) = login(&app, aid).await;
+    let (_, v, extra) = call(&app, "GET", "/api/v1/csrf", json!(null), &ac, &at, "").await;
+    let jar = merge_cookie(&ac, &extra);
+    let token = v["data"]["token"].as_str().unwrap();
+    let (s, v, extra) = call(
+        &app,
+        "POST",
+        "/api/v1/student/sessions",
+        json!({"name":"First","school_id":school,"form_date":"2026-11-15"}),
+        &jar,
+        token,
+        "first",
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    let jar = merge_cookie(&jar, &extra);
+    let token = v["data"]["csrf_token"].as_str().unwrap().to_owned();
+    let student: Uuid = serde_json::from_value(v["data"]["student"]["id"].clone()).unwrap();
+    let mut admin_login = pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT id FROM identity_sessions WHERE admin_id=$1 AND revoked_at IS NULL FOR UPDATE",
+    )
+    .bind(aid)
+    .execute(&mut *admin_login)
+    .await
+    .unwrap();
+    let request_app = app.clone();
+    let rotation = tokio::spawn(async move {
+        call(
+            &request_app,
+            "POST",
+            "/api/v1/student/sessions",
+            json!({"name":"Next","school_id":school,"form_date":"2026-11-15"}),
+            &jar,
+            &token,
+            "next",
+        )
+        .await
+    });
+    wait_for_blocked(&pool, "identity_sessions").await;
+    let mut probe = pool.begin().await.unwrap();
+    let student_unlocked=sqlx::query("SELECT id FROM identity_sessions WHERE student_id=$1 AND revoked_at IS NULL FOR UPDATE NOWAIT").bind(student).execute(&mut *probe).await.is_ok();
+    probe.rollback().await.unwrap();
+    admin_login.rollback().await.unwrap();
+    let (s, v, _) = rotation.await.unwrap();
+    assert_eq!(s, 201, "{v}");
+    assert!(
+        student_unlocked,
+        "student rotation locked student before waiting for admin, inverting admin login order"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn missing_quiz_manifest_and_unknown_school_leave_no_identity(pool: PgPool) {
+    let (school, _) = content(&pool).await;
+    let app = app(pool.clone()).await;
+    let (c, t) = csrf(&app).await;
+    let (s, v, _) = call(
+        &app,
+        "POST",
+        "/api/v1/student/sessions",
+        json!({"name":"Synthetic","school_id":Uuid::new_v4(),"form_date":"2026-11-15"}),
+        &c,
+        &t,
+        "unknown",
+    )
+    .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "SCHOOL_NOT_AVAILABLE");
+    let mut tx = pool.begin().await.unwrap();
+    let old: Uuid =
+        sqlx::query_scalar("SELECT id FROM learning_path_versions ORDER BY version DESC LIMIT 1")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    let quiz: Uuid = sqlx::query_scalar("SELECT id FROM assessment_banks WHERE kind='quiz'")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let empty = Uuid::new_v4();
+    let next = Uuid::new_v4();
+    sqlx::query("INSERT INTO assessment_bank_versions(id,bank_id,version) VALUES($1,$2,2)")
+        .bind(empty)
+        .bind(quiz)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO learning_path_versions(id,version,paired_bank_version_id,quiz_bank_version_id) SELECT $1,2,paired_bank_version_id,$2 FROM learning_path_versions WHERE id=$3").bind(next).bind(empty).bind(old).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO learning_path_items(path_version_id,lesson_version_id,position) SELECT $1,lesson_version_id,position FROM learning_path_items WHERE path_version_id=$2").bind(next).bind(old).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let (s, v, _) = call(
+        &app,
+        "POST",
+        "/api/v1/student/sessions",
+        json!({"name":"Synthetic","school_id":school,"form_date":"2026-11-15"}),
+        &c,
+        &t,
+        "empty-quiz",
+    )
+    .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "CONTENT_NOT_AVAILABLE");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM identity_students")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
     );
 }

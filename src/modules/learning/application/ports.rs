@@ -1,5 +1,6 @@
 //! Repository contracts obtained inside one caller-owned transaction scope.
 //! Adapters only map/load/write; prerequisite, scoring and idempotency decisions stay in services.
+pub use crate::modules::learning::domain::PublishedPath;
 use crate::{
     modules::{
         anthropometry::domain::Measurement, assessment::domain::*,
@@ -11,12 +12,6 @@ use async_trait::async_trait;
 use chrono::NaiveDate;
 use serde_json::Value;
 use uuid::Uuid;
-pub struct PublishedPath {
-    pub id: Uuid,
-    pub paired_bank: Uuid,
-    pub quiz_bank: Uuid,
-    pub usable: bool,
-}
 pub struct CachedOperation {
     pub payload_hash: Vec<u8>,
     pub status: u16,

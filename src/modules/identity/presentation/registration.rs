@@ -22,12 +22,28 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::json;
+/// HTTP-only shape separates malformed UUID syntax (400) from missing/invalid values (422).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistrationRequest {
+    pub name: String,
+    pub school_id: String,
+    pub form_date: String,
+}
 pub async fn student_register(
     State(state): State<AppState>,
     headers: HeaderMap,
-    ApiJson(input): ApiJson<Registration>,
+    ApiJson(input): ApiJson<RegistrationRequest>,
 ) -> Result<Response, ApiError> {
     state.csrf.validate(&headers)?;
+    let input = Registration {
+        name: input.name,
+        school_id: input
+            .school_id
+            .parse()
+            .map_err(|_| ApiError::transport(StatusCode::BAD_REQUEST, "INVALID_SCHOOL_ID"))?,
+        form_date: input.form_date,
+    };
     // Established before enrollment, so response loss and CSRF rotation retain the operation scope.
     let browser = cookie(&headers, "imt_enrollment_context")
         .filter(|s| state.csrf.valid(s))

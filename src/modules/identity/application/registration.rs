@@ -30,6 +30,8 @@ pub struct RegistrationContext {
     pub admin_hash: Option<Vec<u8>>,
 }
 impl StudentService {
+    /// Create a new identity or securely replay the same browser operation; all writes commit together.
+    /// Any school/content/persistence failure drops the transaction without issuing a cookie.
     pub async fn register(
         &self,
         input: Registration,
@@ -69,8 +71,8 @@ impl StudentService {
             let path = tx
                 .published_path()
                 .await?
-                .filter(|p| p.usable)
                 .ok_or(AppError::Conflict("CONTENT_NOT_AVAILABLE"))?;
+            path.require_available()?;
             let scope = StudentScope {
                 student_id: Uuid::new_v4(),
                 enrollment_id: Uuid::new_v4(),

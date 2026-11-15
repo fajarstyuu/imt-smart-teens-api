@@ -38,12 +38,14 @@ impl IdentityRepository for PgStudentTransaction {
         old: Option<&[u8]>,
         sibling: Option<&[u8]>,
     ) -> AppResult<()> {
-        if let Some(hash) = old {
-            sqlx::query("UPDATE identity_sessions SET revoked_at=now() WHERE token_hash=$1 AND role='student' AND revoked_at IS NULL").bind(hash).execute(&mut *self.tx).await.map_err(failure)?;
-        }
+        // Match reviewed admin login's global role order, avoiding a rotation deadlock:
+        // both roles take the admin session row before the student session row.
         if let Some(hash) = sibling {
             sqlx::query("UPDATE identity_sessions SET csrf_binding_hash=$2 WHERE token_hash=$1 AND role='admin' AND revoked_at IS NULL AND idle_expires_at>now() AND absolute_expires_at>now()")
                 .bind(hash).bind(&s.csrf_binding_hash).execute(&mut *self.tx).await.map_err(failure)?;
+        }
+        if let Some(hash) = old {
+            sqlx::query("UPDATE identity_sessions SET revoked_at=now() WHERE token_hash=$1 AND role='student' AND revoked_at IS NULL").bind(hash).execute(&mut *self.tx).await.map_err(failure)?;
         }
         PgIdentityStore::insert_in_transaction(&mut self.tx, s).await
     }
@@ -51,13 +53,27 @@ impl IdentityRepository for PgStudentTransaction {
 #[async_trait]
 impl LearningRepository for PgStudentTransaction {
     async fn published_path(&mut self) -> AppResult<Option<PublishedPath>> {
-        let row=sqlx::query("SELECT p.id,p.paired_bank_version_id,p.quiz_bank_version_id, EXISTS(SELECT 1 FROM learning_path_items i WHERE i.path_version_id=p.id) AND EXISTS(SELECT 1 FROM assessment_bank_items i JOIN assessment_bank_versions v ON v.id=i.bank_version_id JOIN assessment_banks b ON b.id=v.bank_id WHERE v.id=p.paired_bank_version_id AND b.kind='paired') AND EXISTS(SELECT 1 FROM assessment_bank_items i JOIN assessment_bank_versions v ON v.id=i.bank_version_id JOIN assessment_banks b ON b.id=v.bank_id WHERE v.id=p.quiz_bank_version_id AND b.kind='quiz') AS usable FROM learning_path_versions p ORDER BY p.version DESC LIMIT 1").fetch_optional(&mut *self.tx).await.map_err(failure)?;
+        let row=sqlx::query("SELECT p.id,p.paired_bank_version_id,p.quiz_bank_version_id,
+            pb.kind AS paired_kind,qb.kind AS quiz_kind,
+            (SELECT count(*) FROM learning_path_items i WHERE i.path_version_id=p.id) AS lesson_count,
+            (SELECT count(*) FROM assessment_bank_items i WHERE i.bank_version_id=p.paired_bank_version_id) AS paired_question_count,
+            (SELECT count(*) FROM assessment_bank_items i WHERE i.bank_version_id=p.quiz_bank_version_id) AS quiz_question_count
+            FROM learning_path_versions p
+            JOIN assessment_bank_versions pv ON pv.id=p.paired_bank_version_id
+            JOIN assessment_banks pb ON pb.id=pv.bank_id
+            JOIN assessment_bank_versions qv ON qv.id=p.quiz_bank_version_id
+            JOIN assessment_banks qb ON qb.id=qv.bank_id
+            ORDER BY p.version DESC LIMIT 1").fetch_optional(&mut *self.tx).await.map_err(failure)?;
         row.map(|r| {
             Ok(PublishedPath {
                 id: r.try_get("id").map_err(failure)?,
                 paired_bank: r.try_get("paired_bank_version_id").map_err(failure)?,
                 quiz_bank: r.try_get("quiz_bank_version_id").map_err(failure)?,
-                usable: r.try_get("usable").map_err(failure)?,
+                paired_kind: r.try_get("paired_kind").map_err(failure)?,
+                quiz_kind: r.try_get("quiz_kind").map_err(failure)?,
+                lesson_count: r.try_get("lesson_count").map_err(failure)?,
+                paired_question_count: r.try_get("paired_question_count").map_err(failure)?,
+                quiz_question_count: r.try_get("quiz_question_count").map_err(failure)?,
             })
         })
         .transpose()

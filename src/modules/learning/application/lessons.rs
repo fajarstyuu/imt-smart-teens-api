@@ -4,6 +4,7 @@ use crate::modules::{assessment::domain::AssessmentType, learning::domain::*};
 use serde_json::{Value, json};
 use uuid::Uuid;
 impl StudentService {
+    /// Restore identity and the enrollment-time school snapshot from the authenticated scope.
     pub async fn me(&self, scope: StudentScope) -> AppResult<Value> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
@@ -11,12 +12,14 @@ impl StudentService {
         tx.commit().await?;
         Ok(out)
     }
+    /// Derive stage locks from committed attempt, lesson and measurement records, not mutable flags.
     pub async fn progress(&self, scope: StudentScope) -> AppResult<Value> {
         let mut tx = self.uow.begin().await?;
         let out = tx.journey(scope).await?.progress();
         tx.commit().await?;
         Ok(out)
     }
+    /// Protect body reads using the same ordered-path policy as mutations.
     pub async fn lesson(&self, scope: StudentScope, id: Uuid) -> AppResult<LessonView> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
@@ -25,6 +28,7 @@ impl StudentService {
         tx.commit().await?;
         Ok(out)
     }
+    /// Record an idempotent opening/optional visit without conflating it with completion.
     pub async fn open_lesson(
         &self,
         scope: StudentScope,
@@ -47,6 +51,7 @@ impl StudentService {
         tx.commit().await?;
         Ok(out)
     }
+    /// Complete only after required pinned sections were visited; repeats keep the first timestamp.
     pub async fn complete_lesson(&self, scope: StudentScope, id: Uuid) -> AppResult<Value> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
@@ -65,6 +70,7 @@ impl StudentService {
         tx.commit().await?;
         Ok(out)
     }
+    /// Reveal own paired results only after the post-test committed.
     pub async fn summary(&self, scope: StudentScope) -> AppResult<Value> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
