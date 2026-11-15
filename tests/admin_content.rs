@@ -468,6 +468,10 @@ async fn lesson_draft_publish_edit_order_archive_are_revisioned_and_historical(p
     let (s, v, _) = request(&app, "PUT", &base, movement, &c, &t).await;
     assert_eq!(s, 409, "position must use explicit reorder: {v}");
     assert_eq!(v["error"]["code"], "USE_PATH_ORDER");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("urutan"),
+        "must direct the editor to explicit ordering"
+    );
     let (s, v, _) = request(
         &app,
         "POST",

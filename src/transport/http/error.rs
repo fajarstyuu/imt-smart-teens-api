@@ -55,7 +55,12 @@ impl From<AppError> for ApiError {
             AppError::Invalid(code) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 code,
-                "Periksa kembali data yang dimasukkan.",
+                match code {
+                    "QUESTION_VERSION_REQUIRED" => {
+                        "Pilih versi pertanyaan untuk melihat jawaban historis."
+                    }
+                    _ => "Periksa kembali data yang dimasukkan.",
+                },
             ),
             AppError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
@@ -72,6 +77,18 @@ impl From<AppError> for ApiError {
                 StatusCode::CONFLICT,
                 code,
                 match code {
+                    "USE_PATH_ORDER" => {
+                        "Ubah posisi melalui pengaturan urutan materi, lalu muat ulang editor."
+                    }
+                    "CONTENT_REVISION_CONFLICT" => {
+                        "Data konten telah berubah. Muat ulang sebelum menyimpan."
+                    }
+                    "ENROLLMENT_SELECTION_REQUIRED" => {
+                        "Pilih satu pendaftaran untuk melihat hasil siswa."
+                    }
+                    "CONTENT_CONFIGURATION_REQUIRED" => {
+                        "Konfigurasi konten belum tersedia. Hubungi pengelola."
+                    }
                     "SCHOOL_NAME_EXISTS" => "Nama sekolah sudah terdaftar.",
                     "SCHOOL_ARCHIVED" => "Sekolah telah diarsipkan.",
                     "SCHOOL_REVISION_CONFLICT" => {

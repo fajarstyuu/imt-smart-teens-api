@@ -92,6 +92,52 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
         .0,
         403
     );
+    let (_, pre_versions, _) = request(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/admin/question-banks/{}/questions/{}",
+            content.questions[0]["bank_id"].as_str().unwrap(),
+            content.questions[0]["id"].as_str().unwrap()
+        ),
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    let version = pre_versions["data"]["versions"][0]["id"].as_str().unwrap();
+    let report =
+        format!("/api/v1/admin/reports/question-answers?question_version_id={version}&limit=1");
+    let (s, r, _) = request(&app, "GET", &report, json!(null), &rc, &rt).await;
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(r["meta"]["total"], 4);
+    assert_eq!(r["data"].as_array().unwrap().len(), 1);
+    let (_, r, _) = request(
+        &app,
+        "GET",
+        &format!("{report}&offset=99"),
+        json!(null),
+        &rc,
+        &rt,
+    )
+    .await;
+    assert_eq!(r["meta"]["total"], 4);
+    assert_eq!(r["data"], json!([]));
+    let (_, r, _) = request(&app, "GET", &report, json!(null), &c, &t).await;
+    assert_eq!(r["meta"]["total"], 0);
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            &format!("{report}&question_id={}", Uuid::new_v4()),
+            json!(null),
+            &rc,
+            &rt
+        )
+        .await
+        .0,
+        422
+    );
     let foreign_id = foreign["student"]["id"].as_str().unwrap();
     let foreign_attempt = student::attempt(&app, &bc, &bt, "pre_test").await;
     for path in [
@@ -308,6 +354,7 @@ async fn report_states_pending_clear_graded_historical_versions_and_required_sel
     .await;
     assert_eq!(s, 422);
     assert_eq!(v["error"]["code"], "QUESTION_VERSION_REQUIRED");
+    assert!(v["error"]["message"].as_str().unwrap().contains("versi"));
     // Publish a new question version after grading; the report remains frozen on the selected old version.
     let root = &content.questions[0];
     let base = format!(
@@ -381,6 +428,7 @@ async fn report_filters_are_strict_and_date_submission_ranges_are_precise(pool: 
     assert_eq!(s, 200, "{v}");
     for query in [
         "unknown=1",
+        "limit=1&limit=2",
         "limit=0",
         "limit=101",
         "offset=-1",

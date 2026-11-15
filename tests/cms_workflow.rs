@@ -105,7 +105,7 @@ async fn http_cms_publication_student_completion_survives_future_versions_and_ar
     pool: PgPool,
 ) {
     cms::initialize(&pool).await;
-    let (app, c, t, _) = cms::editor(&pool).await;
+    let (app, c, t, aid) = cms::editor(&pool).await;
     let content = cms::publish(&app, &c, &t).await;
     let school = cms::school(&pool, "Historical school").await;
     let (sc, st, enrollment) = student::enroll(&app, school).await;
@@ -292,4 +292,56 @@ async fn http_cms_publication_student_completion_survives_future_versions_and_ar
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["data"]["scores"]["pre_test"], 0);
     assert_eq!(v["data"]["scores"]["post_test"], 100);
+    // Historical admin reporting is exercised after the complete HTTP-authored journey.
+    sqlx::query("INSERT INTO identity_admin_school_grants(admin_id,school_id) VALUES($1,$2)")
+        .bind(aid)
+        .bind(school)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE identity_schools SET name='Renamed archived school',archived_at=now(),revision=revision+1 WHERE id=$1").bind(school).execute(&pool).await.unwrap();
+    let (s, r, _) = request(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/admin/students/{}/results",
+            enrollment["student"]["id"].as_str().unwrap()
+        ),
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(r["data"]["current_stage"], "completed");
+    assert_eq!(
+        r["data"]["enrollment"]["school_name_at_enrollment"],
+        "Historical school"
+    );
+    assert_eq!(r["data"]["lessons"][0]["title"], "Historical lesson");
+    assert_eq!(r["data"]["measurements"][0]["bmi_display"], "20.8");
+    assert_eq!(r["data"]["attempts"].as_array().unwrap().len(), 3);
+    let (s, r, _) = request(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/admin/attempts/{}/answers",
+            post["id"].as_str().unwrap()
+        ),
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(r["data"][0]["text"], "Historical question");
+    assert_eq!(
+        r["data"][0]["selected_options"][0]["text"],
+        "Historical one"
+    );
+    assert_eq!(r["data"][0]["answer_state"], "correct");
+    let (s,r,_)=request(&app,"GET",&format!("/api/v1/admin/reports/question-answers?question_version_id={}&assessment_type=post_test",post["questions"][0]["question_version_id"].as_str().unwrap()),json!(null),&c,&t).await;
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(r["meta"]["total"], 1);
+    assert_eq!(r["data"][0]["snapshot_id"], pre["snapshot_id"]);
 }
