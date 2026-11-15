@@ -1,7 +1,7 @@
 # full-stack-paused — Owner quota checkpoint
 
 - Date/time: 2026-11-15T15:04:24+08:00 (Asia/Jakarta date: 2026-11-15).
-- Status: blocked — deliberately paused by owner for usage/quota preservation, not an implementation failure.
+- Status: in_progress — historical pause checkpoint, explicitly resumed by owner with “Lanjut karna belum 10%” at the next interaction (live check2026-11-15T15:08:13+08:00). The explicit owner continuation condition below is now satisfied; current status lives in docs/handoffs/2026-11-15-full-stack.md. Keep this file as pause history.
 - Owner instruction: stop work at the stated 10% usage threshold, save enough state to resume after reset, then stop. No verified provider-quota percentage or reset time is available in this session. Parent paused immediately rather than guessing the threshold or spending additional quota on monitoring.
 - **DO NOT RESUME implementation, review, tests, agents, deployments or automated quota checks until the owner explicitly asks to continue. A late async result must only be recorded; it is not authorization to start the next task. No automatic resume is scheduled.**
 

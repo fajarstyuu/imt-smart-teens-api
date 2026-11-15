@@ -1,7 +1,7 @@
 # full-stack — Rust backend and React integration
 
 - Date (Asia/Jakarta): 2026-11-15
-- Status: blocked — owner-requested quota pause. Do not resume agents, implementation, tests or review until explicit owner continuation. See docs/handoffs/2026-11-15-full-stack-paused.md for exact checkpoint and recovery instructions.
+- Status: in_progress — owner explicitly resumed work with “Lanjut karna belum 10%”. Pause history and source checkpoint remain in docs/handoffs/2026-11-15-full-stack-paused.md. Provider quota percentage/reset time is not independently verified; no automatic quota monitor is claimed.
 - Objective: implement the approved v1 API/database design and connect the existing frontend, including admin role and school CMS.
 - Owner/orchestrator: Mochi; current session gpt-6.1-sol, exact reasoning effort unknown.
 - Implementation/review agents: Task1 original implementor sa-0-7871c2ae/deleg_666b18fb was interrupted by VPS shutdown; recovered checkpoint be70727, fix implementor sa-0-1e5bbdab/deleg_384118de committed32ae12e. Initial reviewer sa-0-a76868a2/deleg_b899f30a requested changes; scoped reviewer sa-0-cb4cc124/deleg_11ca9750 approved all4findings as addressed. Parent independently passed29Rust+3infra,fmt/clippy/build and accepted Task1. Original runtime listedgpt-6.1-sol; exact effort unknown, no Luna/high claim. Remaining tasks pending.
@@ -32,4 +32,4 @@
 
 ## Next action
 
-- Task2 implemented in f4da518/adc339f by sa-0-48e3a766/deleg_0a6632da; worker reports44Rust+3infra/fmt/clippy/build pass. Exact implemented student contract in docs/runtime-contract.md, actual source/diff verified by parent. Independent task spec/quality reviewer sa-0-e1a64ea5/deleg_ce21e8e0 pending; Task2 not accepted yet. Task3 CMS/reporting, application database migration and frontend integration remain pending.
+- Task2 implemented in f4da518/adc339f by sa-0-48e3a766/deleg_0a6632da; worker reports44Rust+3infra/fmt/clippy/build pass. Exact implemented student contract in docs/runtime-contract.md, actual source/diff verified by parent. Independent Task2 reviewer sa-0-2be84a39/deleg_497d62b9 returned changes_requested: JSON-coupled core contracts, aggregate score storage overflow and transaction-start lesson completion timestamps. Parent verified the relevant code and Decimal boundary. Fix round1 scope recorded; Task2 not accepted. The prior reviewer had stopped without verdict; quota pause was explicitly resumed by owner. Task3 CMS/reporting, application database migration and frontend integration remain pending.
