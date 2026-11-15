@@ -123,7 +123,15 @@ async fn questions_bank_publication_versions_keys_and_revisions(pool: PgPool) {
     assert_eq!(s, 200, "republish: {b}");
     let (_, now, _) = request(&app, "GET", &qpath, json!(null), &c, &t).await;
     assert_eq!(now["data"]["versions"].as_array().unwrap().len(), 2);
+    assert_eq!(now["data"]["draft"]["text"], "Future");
     let v2 = now["data"]["versions"][0]["id"].clone();
+    let published_text: String =
+        sqlx::query_scalar("SELECT text FROM assessment_question_versions WHERE id=$1")
+            .bind(serde_json::from_value::<Uuid>(v2.clone()).unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(published_text, "Future");
     assert_ne!(v1, v2);
     let ids:Vec<(Uuid,Uuid,bool)>=sqlx::query_as("SELECT id,question_version_id,is_correct FROM assessment_options ORDER BY question_version_id,position").fetch_all(&pool).await.unwrap();
     assert_eq!(ids.len(), 4);
@@ -413,6 +421,7 @@ async fn lesson_draft_publish_edit_order_archive_are_revisioned_and_historical(p
     let (s, v, _) = request(&app, "PUT", &base, changed.clone(), &c, &t).await;
     assert_eq!(s, 200, "edit: {v}");
     assert_eq!(v["data"]["state"], "draft");
+    assert_eq!(v["data"]["draft"]["title"], "Changed");
     assert_eq!(request(&app, "PUT", &base, changed, &c, &t).await.0, 409);
     let (s, v, _) = request(&app, "GET", &base, json!(null), &c, &t).await;
     assert_eq!(s, 200, "{v}");

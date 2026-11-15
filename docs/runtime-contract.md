@@ -1,4 +1,4 @@
-# Implemented student runtime contract
+# Implemented Rust v1 runtime contract
 
 This documents the Rust v1 runtime, not the legacy Node fixtures. IDs below are UUID strings, timestamps RFC3339 UTC, calendar dates `YYYY-MM-DD`. Success wraps the listed payload in `{data: ...}`. Errors are `{error:{code,message,details?},request_id}` with Indonesian messages. Mutations require allowlisted `Origin`, the cookie-bound `X-CSRF-Token`, and a valid role-session binding where authenticated. Responses have `Cache-Control: no-store` and `X-Request-ID`. There are no legacy fixture aliases or browser bearer tokens.
 
@@ -105,3 +105,183 @@ Lesson completion timestamps are evaluated at write time after locking and never
 No implicit production seed/import exists. The explicit synthetic fixture is `tests/fixtures/student.rs::content`: two published lessons with one required section each; paired/quiz banks each containing one single and one multiple required question, three options each, exact_set_v1 and max_points1; bank versions plus ordered path version. Later frontend fixtures should drive this actual schema/API, not Node payload aliases.
 
 CMS publications must insert complete immutable children **before** inserting referencing manifests: question-version -> options -> bank-items; lesson-version -> sections -> path-items; bank-version/items -> path-version; path-items -> enrollment; snapshot-questions -> attempt. Snapshot questions must be inserted in the same transaction that created the snapshot (migration5 seals both banks at enrollment commit, including the not-yet-open quiz). All publication inserts belong in the same transaction, so incomplete containers are not visible. Draft edits create new immutable versions instead of UPDATE/DELETE. Task3 must validate all question cardinality/key/required/rule/order and lesson/path completeness before publication. Keep school archive locking unchanged. Reporting must read attempt snapshots, not draft/latest CMS text.
+
+
+## Admin content editor runtime (Task3)
+
+All following routes are implemented Rust/PostgreSQL routes, under `/api/v1/admin`. They require the admin session and `can_manage_content=true`; the separate school-catalog permission and school reporting grants do not substitute. Mutation CSRF/Origin/session binding, cancellation/deadlines, no-store and request-ID/error envelopes are the same as the student and school APIs. No public configuration/bootstrap endpoint exists.
+
+### Editor DTOs
+
+```text
+Version = {id:uuid, version:positive integer, published_at:timestamp}
+SectionDraft = {id:uuid, title:string, body:string, required:boolean}
+LessonDraft = {title:string, description:string, sections:SectionDraft[]}
+LessonEditor = {
+  id, state:draft|published|archived, revision:positive integer,
+  position:positive integer|null, draft:LessonDraft, versions:Version[]
+}
+OptionDraft = {id:uuid, text:string}
+QuestionDraft = {
+  text:string, type:single|multiple, options:OptionDraft[],
+  correct_option_ids:uuid[], required:true
+}
+QuestionEditor = {
+  id, bank_id, state:draft|published|archived, revision:positive integer,
+  position:positive integer, draft:QuestionDraft, versions:Version[]
+}
+BankEditor = {
+  id, kind:paired|quiz, state:draft|published|archived,
+  revision:positive integer, versions:Version[]
+}
+PathManifest = {
+  id, version:positive integer, paired_bank_version_id, quiz_bank_version_id,
+  lessons:[{lesson_id,lesson_version_id,position}]
+}
+PathEditor = {
+  id, revision:positive integer, lesson_ids:uuid[], paired_bank_id, quiz_bank_id,
+  versions:Version[], published:PathManifest|null
+}
+```
+
+`versions` is newest-first immutable history metadata; `Version.id` is the immutable version UUID, **not** a root/editor ID or concurrency revision. The first entry is the newest publication, including when the root has a dirty draft. Archived lesson `position` is null because it no longer belongs to the configured draft order. The current question draft retains its last positive position after archive. `published` is the newest path manifest, not a draft preview. Histories remain readable after archive. Draft JSONB uses infrastructure schema1 and is never exposed as a raw database record.
+
+### Complete route/payload table
+
+Inputs below are exact JSON field names. All successes are `{data:<payload>}` except list envelopes also include top-level `meta:{limit,offset,total}`. Lists use `limit=25` by default (1–100), `offset=0` (nonnegative). Lesson/question `status` may be `draft|published|archived`; omission includes all states. Lessons sort `(current draft position NULLS LAST,id)`; questions sort `(position,id)`.
+
+| Method/path suffix | Input/query | Success |
+| --- | --- | --- |
+| GET `/lessons` | `status?,limit?,offset?` | 200 `LessonEditor[]` + meta |
+| GET `/lessons/{lesson_id}` | none | 200 `LessonEditor` |
+| POST `/lessons` | `{title,description,sections:[{id?,title,body,required}],position}` | 201 `LessonEditor`, revision1 |
+| PUT `/lessons/{lesson_id}` | create fields plus required `expected_revision` | 200 `LessonEditor` |
+| POST `/lessons/{lesson_id}/publication` | `{expected_revision}` | 200 `LessonEditor`, fresh version first in history |
+| POST `/lessons/{lesson_id}/archive` | `{expected_revision}` | 200 `LessonEditor` |
+| GET `/learning-path` | none | 200 `PathEditor` |
+| PUT `/learning-path/order` | `{lesson_ids:[uuid],expected_revision}` | 200 `PathEditor` |
+| POST `/learning-path/publication` | `{expected_revision}` | 200 `PathEditor`, new `published` manifest |
+| GET `/question-banks` | no query | 200 `BankEditor[]`, paired then quiz; fixed meta `{limit:2,offset:0,total:2}` |
+| GET `/question-banks/{bank_id}/questions` | `status?,limit?,offset?` | 200 `QuestionEditor[]` + meta |
+| GET `/question-banks/{bank_id}/questions/{question_id}` | none | 200 `QuestionEditor` |
+| POST `/question-banks/{bank_id}/questions` | `{text,type,options:[{id?,text}],correct_option_ids:[uuid],position,required:true}` | 201 `QuestionEditor`, revision1 |
+| PUT `/question-banks/{bank_id}/questions/{question_id}` | create fields plus required `expected_revision` | 200 `QuestionEditor` |
+| POST `/question-banks/{bank_id}/questions/{question_id}/archive` | `{expected_revision}` | 200 `QuestionEditor` |
+| POST `/question-banks/{bank_id}/publication` | `{expected_revision}` | 200 `BankEditor`, fresh version first in history |
+
+Unknown JSON command fields are422; create rejects an `expected_revision` field, while update requires it (`REVISION_REQUIRED`). A valid JSON command with unsupported type/status, negative revision, invalid pagination or invalid content is422. Generic malformed path/query extraction is400; missing/invalid admin session401; missing content grant403. Unknown lesson/bank/question, including a question under another bank, is404. Revision mismatch is409 `CONTENT_REVISION_CONFLICT`; archived mutations409 `CONTENT_ARCHIVED`. Archive is not a delete or restore, and does not erase versions. Repeating an old revision conflicts rather than creating duplicate publication rows.
+
+### Validation, identity and revision rules
+
+- All editorial text is **plain text**, not HTML or Markdown rendering instructions. The backend rejects `<`, `>`, inappropriate control characters and overlong fields. Frontend must render with escaped text nodes; never `innerHTML` or equivalent, including on historical data. Titles must be nonblank, up to200 Unicode characters; descriptions up to10000 (empty allowed); section bodies up to10000. Sections have distinct draft UUIDs and a maximum100. Draft lessons may have no sections or blank section bodies, but publication requires at least one section and nonblank bodies/titles. Section `required` remains a boolean, allowing optional sections.
+- Question text is nonblank up to10000 characters; 2–100 nonblank options, each up to2000. Option IDs and trimmed option texts must be distinct. Keys must be a distinct nonempty subset of those IDs; single-choice requires exactly one correct option, multiple-choice accepts one or more. Initial questions require `required:true`, equal max_points1 and `exact_set_v1`. These fields/rules are not client-editable score inputs.
+- Client should allocate option UUIDs **before** filling `correct_option_ids`. Missing IDs can be generated for unreferenced options, but the server never guesses a key from text, index or a missing ID. Unknown keys are422. Reuse section/option draft IDs on an ordinary edit. Every publication generates new immutable option/section row IDs; `section_key` preserves the section draft identity. Old published IDs, private keys and student snapshots are not overwritten or transplanted.
+- Lesson create appends only: `position` must be the next free draft-path position, otherwise409 `USE_PATH_ORDER`. Lesson update must carry its **current** position; a requested move returns that same actionable conflict. Reorder only with PUT `/learning-path/order`, supplying every nonarchived member exactly once. Duplicate/missing/foreign IDs are422 `INVALID_PATH_ORDER`.
+- Lesson create/archive atomically maintains path membership and advances the path revision. Lesson edit and lesson publication advance only the lesson revision. Order and path publication advance the path revision. All operations taking both locks acquire path before lesson; path publication acquires path, bank roots sorted by UUID, then lesson roots sorted by UUID. An editor position read before a concurrent reorder cannot overwrite that newer order: reload and explicitly reorder.
+- Every question create/update/archive advances and dirties its bank revision. Bank publication compares the bank revision, validates every active persisted draft and unique positive positions plus the shared NUMERIC(12,4) aggregate budget, constructs immutable versions/options/items, advances every included question revision and the bank revision, then audits/commits. Bank root is locked before question roots. Frontend must refresh bank and question revisions after publication. Dirty question positions can be edited explicitly; duplicate positions cannot be published.
+- Path publication uses the configured **explicit order**, newest existing published version of each active lesson, and newest existing published paired/quiz banks. It does not publish drafts. Dirty edits therefore do not affect an old publication. Referenced immutable lesson/question/key/rule/position/bank ownership and exact aggregate budget are validated again. Empty path422 `EMPTY_LEARNING_PATH`; empty bank publication422 `EMPTY_QUESTION_BANK`; missing/incomplete/over-budget published bank references409 `CONTENT_NOT_AVAILABLE`. Invalid published content is422. Archived question roots must be excluded via a newer valid bank publication before a new path can reference that bank. Archived lessons are removed from future draft membership.
+- `expected_revision` on a path covers membership/order and previous path publications, **not** a chosen bank/lesson version token: the inventory command has no arbitrary version override. Refresh editor metadata to preview the latest published references before deliberately publishing. Existing enrollments stay on their old path, lesson, question/option/key snapshots regardless of later drafts, publications, archives or school labels.
+- All mutation, root revision, immutable construction and redacted audit effects share one database transaction. No answer keys or text are duplicated into audit metadata. Publication completes children before referencing containers; migrations1–5 remain unchanged.
+
+### Frontend version-selection workflow
+
+Use the bank list to resolve logical paired/quiz IDs; request bounded question pages and question detail on demand. Display its current draft/revision separately from its `versions` history. A report selection stores **both** the logical question ID (optional consistency filter) and the selected `versions[n].id` as `question_version_id`; show version number/published_at so an older cohort's answers are not labeled with the latest draft. Refreshing editor content must not silently change an already selected report version. Changing version resets report pagination. Do not send only `question_id`, aggregate revisions together, or interpret a stale `expected_revision` as an immutable version. Never use admin editor objects for student rendering/bundles: they contain private draft keys.
+
+## Admin historical reporting runtime (Task3)
+
+Reports require an admin session and explicit school grants; neither content nor school-catalog management grants imply any data scope. Every report's source SQL joins **live** `identity_admin_school_grants` before count/order/pagination or selecting detail candidates. Reports use read-only repeatable-read transactions for coherent metadata/rows. Empty scope gives200 empty lists with total0; inaccessible and nonexistent student/attempt details both404. An explicit ungranted `school_id` filter is403 without loading that school's students. Revocation is effective on subsequent reads. There is no bulk every-student-answer endpoint.
+
+All reports use bounded top-level lists: default limit25, maximum100, offset0. Unknown, duplicate, empty, malformed or invalid filters are422 (`INVALID_REPORT_FILTER` or the more specific code below), including unknown values of stage/type and invalid UUID query values. Path UUID syntax errors remain400. Dates require exact `YYYY-MM-DD` calendar values; `form_date_from` and `form_date_to` are inclusive. Submission bounds require RFC3339 **UTC** (`Z` or `+00:00`, timezone offsets other than zero rejected) and are `[submitted_from,submitted_to)`. Inverted ranges are422 `INVALID_REPORT_RANGE`; equal submission bounds give an empty interval. A submitted range filters actual submitted attempts, excluding unstarted/in-progress ones. With `assessment_type` the same attempt must satisfy both type and time bounds.
+
+| Method/path suffix | Accepted query fields | Success |
+| --- | --- | --- |
+| GET `/students` | `school_id,form_date_from,form_date_to,submitted_from,submitted_to,stage,assessment_type,limit,offset` | 200 `StudentSummary[]` + meta |
+| GET `/students/{student_id}/results` | `enrollment_id` | 200 `StudentResults` |
+| GET `/attempts/{attempt_id}/answers` | `limit,offset` | 200 `QuestionAnswer[]` + meta |
+| GET `/reports/question-answers` | required `question_version_id`; optional `question_id,bank_id,assessment_type,school_id,submitted_from,submitted_to,limit,offset` | 200 `QuestionAnswer[]` + meta |
+
+Student list rows are one **visible enrollment summary**, not a flattened answer export or deduplicated-human directory. Order is `(student created_at DESC,student_id DESC,enrollment created_at DESC,enrollment_id DESC)`. An `assessment_type`-only filter requires an actual attempt of that type; it does not include a not-yet-started type. Stage is the durable journey projection `pre_test|lessons|quiz|calculator|post_test|completed`, matching the student's current-stage policy. No independent mutable stage flag is stored.
+
+Results select among granted enrollments of the requested student. Omit `enrollment_id` only when exactly one is visible; zero404; more than one409 `ENROLLMENT_SELECTION_REQUIRED` (select deliberately). An enrollment of another student or ungranted school404. Only started attempts have entries in `attempts`; missing quiz/post attempts are absent rather than zero-score placeholders. Lessons include all pinned lesson metadata and nullable opened/completed timestamps, not lesson bodies. Measurements are this one enrollment's stored history, newest `(created_at,id)` first, using the existing exact measurement DTO. Results do not paginate these per-enrollment histories; use bounded answer endpoints for question-level inspection.
+
+```text
+StudentSummary = {
+  student_id, name, enrollment_id, school_id, school_name_at_enrollment,
+  form_date, path_version_id, created_at, completed_at:timestamp|null,
+  current_stage, latest_submitted_at:timestamp|null
+}
+AttemptSummary = {
+  id, snapshot_id, assessment_type, attempt_number, status:in_progress|submitted,
+  created_at, submitted_at:timestamp|null, earned_points:number|null,
+  max_points:number|null, score_percent:integer|null
+}
+StudentResults = {
+  student:Student, enrollment:Enrollment, current_stage,
+  latest_submitted_at:timestamp|null, attempts:AttemptSummary[],
+  lessons:LessonMetadata[], measurements:Measurement[]
+}
+QuestionAnswer = {
+  student_id, student_name, enrollment_id, school_id, school_name_at_enrollment,
+  bank_id, bank_version_id, snapshot_id, snapshot_question_id,
+  question_id, question_version_id, position, text, type:single|multiple,
+  assessment_type, attempt_id:uuid|null, attempt_number:integer|null,
+  attempt_status:in_progress|submitted|null, answer_revision:integer|null,
+  saved_at:timestamp|null, submitted_at:timestamp|null,
+  options:[{id,text}], selected_option_ids:uuid[], selected_options:[{id,text}],
+  answer_state:not_started|unanswered|answered|incorrect|correct,
+  correctness:boolean|null, earned_points:number|null, max_points:number
+}
+```
+
+`StudentSummary.created_at` is enrollment creation time (the internal primary list sort additionally uses student creation time). Question/option/selected text and all snapshot/version IDs come from immutable historical references, **never** latest editor drafts. Point fields are exact scale4 JSON numeric tokens (e.g. `1.0000`, `0.0000`), constructed from checked scaled integers without floating point; preserve raw decimal tokens if frontend exports exact decimals. Percent follows the existing integer half-up scoring policy. Admin historical grading is visible with school scope even while the student pre/post reveal policy hides their score. No raw private answer-key list is returned in reports.
+
+For one attempt the answer page is pinned snapshot order `(position,snapshot_question_id)` (the shared stable query additionally orders fixed attempt/enrollment metadata). Across students the stable order is `(submitted_at DESC NULLS LAST,attempt_id DESC NULLS LAST,enrollment_id DESC,assessment_type,position,snapshot_question_id)`. The selected version determines membership: paired snapshot questions produce separate pre/post rows per enrollment, even when post is not yet started; quiz questions produce quiz rows only. If the attempt does not exist, attempt ID/number/status and submission time are null. An unknown version alone yields an empty scoped page; optional `bank_id`/`question_id` must agree with the selected immutable version or422 `INVALID_QUESTION_SELECTION`. Missing version, including question-ID-only requests, is422 `QUESTION_VERSION_REQUIRED` with a version-selection message.
+
+Answer state is intentionally not a boolean:
+
+| Stored facts | answer_state | correctness / earned |
+| --- | --- | --- |
+| no answer row, including a not-yet-started attempt | `not_started` | null / null |
+| saved row with zero selected options | `unanswered` | null while pending; historical persisted grading if submitted |
+| nonempty selection, unsubmitted attempt | `answered` | null / null (not incorrectly marked wrong) |
+| submitted nonempty exact-key match | `correct` | true / stored exact points |
+| submitted nonempty mismatch | `incorrect` | false / stored exact zero |
+
+`answer_revision` is null for no row (not a fabricated autosave revision); clearing retains a positive revision and saved timestamp. Empty selections are not evidence that a question/attempt was never started. Counts include authorized pinned rows before answer-state projection, so clearing/saving does not change report membership. There is no lookup by a student's name or school label.
+
+## Explicit development commands and application entry points
+
+From this backend worktree, with the existing Rust toolchain:
+
+```sh
+export PATH=/home/ubuntu/.cargo/bin:$PATH
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+# Load an operator-owned private DEVELOPMENT settings file; never print its contents.
+set -a; . /path/to/private/development.env; set +a
+cargo run --locked -- migrate
+APP_ENV=development cargo run --locked -- init-content-config
+HTTP_HOST=127.0.0.1 HTTP_PORT=4180 APP_ENV=development cargo run --locked -- serve
+```
+
+The placeholder file path is not a committed file. It must supply the intended development `DATABASE_URL`, separate DDL `MIGRATION_DATABASE_URL`, private `CSRF_SIGNING_KEY` (at least32 bytes), and allowlisted frontend origin (local frontend port5173). Use insecure session cookies only on loopback development HTTP; production still requires secure settings. No migrations run automatically during `serve` or config initialization. Do not point test/init commands at an application/production database by accident. Task3 verification only used SQLx-created isolated databases; the existing application database was not migrated or modified.
+
+`init-content-config` is an explicit private CLI command taking **no arguments**. Its application entry point is `learning::admin::application::LessonCms::initialize_development(environment: &str) -> AppResult<()>`, backed by `LessonStore::initialize_empty`. It only accepts `development`, rejects production/test/unknown modes, serializes concurrent initializers with an advisory transaction lock, inserts missing empty paired/quiz roots and one empty configured path draft, and preserves all existing IDs/revisions/drafts/publications. Multiple existing configured paths fail409 rather than guessing one. It creates **no** schools, questions, lessons, publications, students, sessions, sample credentials or answer content. A missing configured path/bank pair is409 `CONTENT_CONFIGURATION_REQUIRED` from the relevant editor facade; GET never initializes or publishes. Content must then be authored/published deliberately through authenticated admin endpoints.
+
+The existing private `provision-admin` command remains separate. Supply ADMIN_EMAIL/ADMIN_NAME and the password privately via the existing environment/pipe convention, never command arguments; set ADMIN_CAN_MANAGE_CONTENT and/or ADMIN_CAN_MANAGE_SCHOOLS explicitly as needed. Provisioning creates no reporting grants. Reporting grants require a separate authorized operator assignment to existing school IDs; there is no public permission/grant endpoint. No default admin account or teaching seed command was added.
+
+Bootstrap injects `AppState.lesson_cms: LessonCms`, `bank_cms: BankCms`, and `reports: Reports`. Core-owned ports are `learning::admin::application::LessonStore`, `assessment::admin::application::BankStore`, and `reporting::application::ReportReader`; the corresponding PostgreSQL adapters own transaction lifetimes. Editorial core types/commands and report results contain no Axum, SQLx, environment access, JSON Value/Number or HTTP DTO formatting. Common editorial metadata/pagination/text rules are in `shared::editing`; content actor authorization belongs to identity application; neutral persistence/audit helpers are infrastructure in `platform::editor`.
+
+To reproduce the synthetic HTTP publication/enrollment/completion/historical-reporting proof without adding content to a running application:
+
+```sh
+# .env.test is the existing ignored private SQLx test configuration; do not display it.
+set -a; . ./.env.test; set +a
+cargo test --locked --test admin_content --test cms_workflow --test cms_concurrency --test reporting -- --test-threads=1
+cargo fmt --all --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --locked -- --test-threads=1
+cargo build --locked
+python3 -m unittest discover -s tests/infra -p 'test_*.py' -v
+```
+
+These tests author synthetic content through the real router/PostgreSQL adapters; test-only fixtures are not bootstrap content or an alternative production backend. `cms_workflow` runs CMS publication -> enrollment -> later CMS publications/archive -> full original student completion -> authorized historical reporting, including school rename/archive and exact snapshot/label preservation. There are no501 routes or fixture JSON handlers in the runtime.

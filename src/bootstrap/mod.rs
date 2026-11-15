@@ -69,7 +69,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn run_command() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() > 1 {
-        bail!("use serve, migrate, provision-admin, or init-content-config without additional arguments");
+        bail!(
+            "use serve, migrate, provision-admin, or init-content-config without additional arguments"
+        );
     }
     let command = args.first().map(String::as_str).unwrap_or("serve");
     if !["serve", "migrate", "provision-admin", "init-content-config"].contains(&command) {
