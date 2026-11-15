@@ -35,6 +35,7 @@ pub fn build_router(state: AppState) -> Router {
         ])
         .expose_headers([axum::http::HeaderName::from_static("x-request-id")]);
     Router::new()
+        .merge(crate::modules::learning::admin::presentation::routes())
         .merge(crate::modules::learning::presentation::routes())
         .route(
             "/health/live",

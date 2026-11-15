@@ -33,6 +33,9 @@ pub async fn assemble(pool: PgPool, settings: Settings) -> Result<AppState> {
         .hash("non-account-constant-time-verification-only".into())
         .await?;
     Ok(AppState {
+        lesson_cms: crate::modules::learning::admin::application::LessonCms::new(Arc::new(
+            crate::modules::learning::admin::infrastructure::PgLessonCms::new(pool.clone()),
+        )),
         students: crate::modules::learning::application::StudentService::new(
             Arc::new(
                 crate::modules::learning::infrastructure::PgStudentUnitOfWork::new(pool.clone()),
@@ -63,7 +66,7 @@ async fn run_command() -> Result<()> {
         bail!("use serve, migrate, or provision-admin without additional arguments");
     }
     let command = args.first().map(String::as_str).unwrap_or("serve");
-    if !["serve", "migrate", "provision-admin"].contains(&command) {
+    if !["serve", "migrate", "provision-admin", "init-content-config"].contains(&command) {
         bail!("unknown command: use serve, migrate, or provision-admin");
     }
     tracing_subscriber::fmt()
@@ -94,6 +97,18 @@ async fn run_command() -> Result<()> {
     let pool = database::connect(&settings.database)
         .await
         .map_err(|_| anyhow::anyhow!("database connection failed"))?;
+    if command == "init-content-config" {
+        let cms = crate::modules::learning::admin::application::LessonCms::new(Arc::new(
+            crate::modules::learning::admin::infrastructure::PgLessonCms::new(pool.clone()),
+        ));
+        let result = cms.initialize_development(&settings.environment).await;
+        pool.close().await;
+        result?;
+        tracing::info!(
+            "empty development content configuration initialized; no teaching content or credentials created"
+        );
+        return Ok(());
+    }
     if command == "provision-admin" {
         let result = provision(pool.clone()).await;
         pool.close().await;

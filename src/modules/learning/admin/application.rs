@@ -1,0 +1,280 @@
+//! Typed editorial commands and policies; draft identities never become published row IDs.
+use crate::{
+    modules::identity::{application::AuditActor, domain::Principal},
+    shared::error::{AppError, AppResult},
+};
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use std::{collections::HashSet, sync::Arc};
+use uuid::Uuid;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentState {
+    Draft,
+    Published,
+    Archived,
+}
+impl ContentState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Published => "published",
+            Self::Archived => "archived",
+        }
+    }
+    pub fn parse(s: &str) -> AppResult<Self> {
+        match s {
+            "draft" => Ok(Self::Draft),
+            "published" => Ok(Self::Published),
+            "archived" => Ok(Self::Archived),
+            _ => Err(AppError::Invalid("INVALID_CONTENT_STATUS")),
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Version {
+    pub id: Uuid,
+    pub version: i32,
+    pub published_at: DateTime<Utc>,
+}
+#[derive(Clone, Debug)]
+pub struct SectionDraft {
+    pub id: Uuid,
+    pub title: String,
+    pub body: String,
+    pub required: bool,
+}
+#[derive(Clone, Debug)]
+pub struct LessonDraft {
+    pub title: String,
+    pub description: String,
+    pub sections: Vec<SectionDraft>,
+}
+impl LessonDraft {
+    pub fn validate(&self, publishing: bool) -> AppResult<()> {
+        text(&self.title, 200, false)?;
+        text(&self.description, 10000, true)?;
+        let mut ids = HashSet::new();
+        for s in &self.sections {
+            if !ids.insert(s.id) {
+                return Err(AppError::Invalid("DUPLICATE_SECTION_ID"));
+            }
+            text(&s.title, 200, false)?;
+            text(&s.body, 10000, !publishing)?;
+        }
+        if self.sections.len() > 100 || (publishing && self.sections.is_empty()) {
+            return Err(AppError::Invalid("INVALID_LESSON_SECTIONS"));
+        }
+        Ok(())
+    }
+}
+/// Content is plain text. Markup delimiters are rejected rather than trusted as admin HTML.
+pub fn text(s: &str, max: usize, empty: bool) -> AppResult<()> {
+    if (!empty && s.trim().is_empty())
+        || s.chars().count() > max
+        || s.contains(['<', '>'])
+        || s.chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err(AppError::Invalid("INVALID_CONTENT_TEXT"));
+    }
+    Ok(())
+}
+#[derive(Clone, Debug)]
+pub struct LessonEditor {
+    pub id: Uuid,
+    pub state: ContentState,
+    pub revision: i64,
+    pub position: Option<i32>,
+    pub draft: LessonDraft,
+    pub versions: Vec<Version>,
+}
+pub struct ContentQuery {
+    pub status: Option<ContentState>,
+    pub limit: i64,
+    pub offset: i64,
+}
+impl ContentQuery {
+    pub fn validate(&self) -> AppResult<()> {
+        if !(1..=100).contains(&self.limit) || self.offset < 0 {
+            Err(AppError::Invalid("INVALID_PAGINATION"))
+        } else {
+            Ok(())
+        }
+    }
+}
+pub struct Page<T> {
+    pub rows: Vec<T>,
+    pub total: i64,
+}
+#[derive(Clone, Debug)]
+pub struct PathEditor {
+    pub id: Uuid,
+    pub revision: i64,
+    pub lesson_ids: Vec<Uuid>,
+    pub paired_bank_id: Uuid,
+    pub quiz_bank_id: Uuid,
+    pub versions: Vec<Version>,
+    pub published: Option<PathManifest>,
+}
+#[derive(Clone, Debug)]
+pub struct PathManifest {
+    pub id: Uuid,
+    pub version: i32,
+    pub paired_bank_version_id: Uuid,
+    pub quiz_bank_version_id: Uuid,
+    pub lessons: Vec<(Uuid, Uuid, i32)>,
+}
+/// The adapter owns one transaction; path is always locked before lesson roots.
+#[async_trait]
+pub trait LessonStore: Send + Sync {
+    /// Explicit private bootstrap; preserve all existing content and only add missing empty roots.
+    async fn initialize_empty(&self) -> AppResult<()>;
+    async fn list(&self, q: ContentQuery) -> AppResult<Page<LessonEditor>>;
+    async fn get(&self, id: Uuid) -> AppResult<LessonEditor>;
+    async fn create(
+        &self,
+        draft: LessonDraft,
+        position: i32,
+        actor: AuditActor,
+    ) -> AppResult<LessonEditor>;
+    async fn update(
+        &self,
+        id: Uuid,
+        draft: LessonDraft,
+        position: i32,
+        revision: i64,
+        actor: AuditActor,
+    ) -> AppResult<LessonEditor>;
+    async fn publish(&self, id: Uuid, revision: i64, actor: AuditActor) -> AppResult<LessonEditor>;
+    async fn archive(&self, id: Uuid, revision: i64, actor: AuditActor) -> AppResult<LessonEditor>;
+    async fn path(&self) -> AppResult<PathEditor>;
+    async fn order(
+        &self,
+        ids: Vec<Uuid>,
+        revision: i64,
+        actor: AuditActor,
+    ) -> AppResult<PathEditor>;
+}
+#[derive(Clone)]
+pub struct LessonCms {
+    store: Arc<dyn LessonStore>,
+}
+impl LessonCms {
+    pub fn new(store: Arc<dyn LessonStore>) -> Self {
+        Self { store }
+    }
+    /// No startup or public HTTP caller invokes this private operational use case.
+    pub async fn initialize_development(&self, environment: &str) -> AppResult<()> {
+        if environment != "development" {
+            return Err(AppError::Forbidden);
+        }
+        self.store.initialize_empty().await
+    }
+    pub async fn list(&self, p: &Principal, q: ContentQuery) -> AppResult<Page<LessonEditor>> {
+        authorize(p)?;
+        q.validate()?;
+        self.store.list(q).await
+    }
+    pub async fn get(&self, p: &Principal, id: Uuid) -> AppResult<LessonEditor> {
+        authorize(p)?;
+        self.store.get(id).await
+    }
+    pub async fn create(
+        &self,
+        p: &Principal,
+        session: Uuid,
+        request: String,
+        d: LessonDraft,
+        pos: i32,
+    ) -> AppResult<LessonEditor> {
+        let actor = actor(p, session, request)?;
+        d.validate(false)?;
+        if pos < 1 {
+            return Err(AppError::Invalid("INVALID_POSITION"));
+        }
+        self.store.create(d, pos, actor).await
+    }
+    pub async fn update(
+        &self,
+        p: &Principal,
+        a: AuditActor,
+        id: Uuid,
+        d: LessonDraft,
+        pos: i32,
+        rev: i64,
+    ) -> AppResult<LessonEditor> {
+        authorize(p)?;
+        revision(rev)?;
+        d.validate(false)?;
+        self.store.update(id, d, pos, rev, a).await
+    }
+    pub async fn publish(
+        &self,
+        p: &Principal,
+        a: AuditActor,
+        id: Uuid,
+        rev: i64,
+    ) -> AppResult<LessonEditor> {
+        authorize(p)?;
+        revision(rev)?;
+        self.store.publish(id, rev, a).await
+    }
+    pub async fn archive(
+        &self,
+        p: &Principal,
+        a: AuditActor,
+        id: Uuid,
+        rev: i64,
+    ) -> AppResult<LessonEditor> {
+        authorize(p)?;
+        revision(rev)?;
+        self.store.archive(id, rev, a).await
+    }
+    pub async fn path(&self, p: &Principal) -> AppResult<PathEditor> {
+        authorize(p)?;
+        self.store.path().await
+    }
+    pub async fn order(
+        &self,
+        p: &Principal,
+        a: AuditActor,
+        ids: Vec<Uuid>,
+        rev: i64,
+    ) -> AppResult<PathEditor> {
+        authorize(p)?;
+        revision(rev)?;
+        if ids.iter().collect::<HashSet<_>>().len() != ids.len() {
+            return Err(AppError::Invalid("INVALID_PATH_ORDER"));
+        }
+        self.store.order(ids, rev, a).await
+    }
+}
+pub fn authorize(p: &Principal) -> AppResult<()> {
+    if p.admin()?.can_manage_content {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden)
+    }
+}
+pub fn actor(p: &Principal, session_id: Uuid, request_id: String) -> AppResult<AuditActor> {
+    authorize(p)?;
+    Ok(AuditActor {
+        admin_id: p.admin()?.id,
+        session_id,
+        request_id,
+    })
+}
+pub fn revision(r: i64) -> AppResult<()> {
+    if r < 0 {
+        Err(AppError::Invalid("INVALID_REVISION"))
+    } else {
+        Ok(())
+    }
+}
+pub fn check_revision(actual: i64, expected: i64) -> AppResult<()> {
+    if actual != expected {
+        Err(AppError::Conflict("CONTENT_REVISION_CONFLICT"))
+    } else {
+        Ok(())
+    }
+}
