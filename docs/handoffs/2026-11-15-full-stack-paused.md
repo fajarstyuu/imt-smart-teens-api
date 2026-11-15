@@ -31,7 +31,7 @@ Task2 concern: anonymous enrollment replay requires possession of an unexpired2-
 ## Review interruption
 
 - Pending reviewer: sa-0-e1a64ea5, delegation deleg_ce21e8e0.
-- Parent called delegate_task stop for that exact reviewer; tool returned interrupt_requested (stops at next iteration boundary). No implementation worker was running; do not create another reviewer to finish while paused.
+- Stop confirmed by async completion: sa-0-e1a64ea5/deleg_ce21e8e0 ended with status interrupted. Partial output only says the operation was interrupted while waiting for a model response; no completed findings, spec/quality verdict or approval was returned. Task2 review remains incomplete. No implementation worker was running; do not create another reviewer while paused.
 - Partial/final async review may arrive after pause. Preserve it without resuming fixes/Task3; unless a complete PASS is actually returned and checked, review remains incomplete/unknown.
 - Immutable review package: .superpowers/sdd/2026-11-15-full-stack/review-23cd7c7..adc339f.diff.
 
