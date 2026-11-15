@@ -4,7 +4,7 @@
 - Status: in_progress
 - Objective: implement the approved v1 API/database design and connect the existing frontend, including admin role and school CMS.
 - Owner/orchestrator: Mochi; current session gpt-6.1-sol, exact reasoning effort unknown.
-- Implementation/review agents: Task1 original implementor sa-0-7871c2ae, delegation deleg_666b18fb, BASE 77eda42153d14eb7c48a0014ed3a5d2a61e8dda5; runtime listed gpt-6.1-sol, exact effort unknown. VPS shutdown interrupted its terminal result; no live worker after reboot. Parent recovered existing source and independently passed 23 Rust tests, 3 infrastructure tests, fmt/clippy/build. Task1 is ready_for_review, not accepted; later tasks pending. No Luna/high routing is claimed.
+- Implementation/review agents: Task1 original implementor sa-0-7871c2ae/deleg_666b18fb was interrupted by VPS shutdown; recovered checkpoint be70727, fix implementor sa-0-1e5bbdab/deleg_384118de committed32ae12e. Initial reviewer sa-0-a76868a2/deleg_b899f30a requested changes; scoped reviewer sa-0-cb4cc124/deleg_11ca9750 approved all4findings as addressed. Parent independently passed29Rust+3infra,fmt/clippy/build and accepted Task1. Original runtime listedgpt-6.1-sol; exact effort unknown, no Luna/high claim. Remaining tasks pending.
 - Authorization: owner requested local foundation merge followed by backend/frontend work; explicitly approved implementation subagents using available models in clarification UI.
 
 ## Scope and source
@@ -27,9 +27,9 @@
 ## Verification and review
 
 - Foundation merge verified with all 3 existing tests passing and branch diff whitespace clean.
-- New Rust/API/frontend behavior: not yet implemented or verified at this handoff creation.
-- Task/final review status: pending. Feature must not be marked complete until real Rust/PostgreSQL and browser integration are exercised.
+- New Rust/API/frontend behavior: Task1 recovered implementation checkpoint be707273ba6c6f082addd36cf586d80c79000767. After reboot parent passed 23 real Rust tests (0 failures/ignored), 3 Compose tests, fmt/clippy/build. App database still unmigrated; feature runtime and frontend integration remain pending.
+- Task1 initial review found CORS/lifecycle/layering issues; fix32ae12e addresses all4findings, scoped re-review sa-0-cb4cc124/deleg_11ca9750 PASS/READY. Parent independently re-ran29Rust tests(0failed/ignored),3infra,fmt,clippy,lockedbuild and range whitespace: allpass. Task1 accepted. Deferred minor: unchanged blocking password work can delay Tokio runtime teardown; no universal process hard-exit guarantee is claimed beyond tested busy DB/request/pool behavior. Carry to final review. Application DB still unmigrated; final feature/integration review pending.
 
 ## Next action
 
-- Assign Task1 backend foundation to an isolated implementation subagent with exact path ownership and TDD/report requirements.
+- Assign Task2 persisted student workflow after acceptedTask1; reuse reviewed session/cancellation/error/transaction boundaries, implement real learning/assessment/measurement persistence and tests before frontend work.
