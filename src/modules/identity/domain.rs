@@ -1,5 +1,5 @@
 //! Identity invariants and owned principal data. This layer performs no I/O.
-use crate::shared::application::{AppError, AppResult};
+use crate::shared::error::{AppError, AppResult};
 use chrono::NaiveDate;
 use unicode_casefold::UnicodeCaseFold;
 use unicode_normalization::UnicodeNormalization;

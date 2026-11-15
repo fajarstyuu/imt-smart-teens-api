@@ -58,12 +58,16 @@ pub fn build_router(state: AppState) -> Router {
         .method_not_allowed_fallback(|| async {
             ApiError::transport(StatusCode::METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED")
         })
+        // Incoming order (last layer is outermost): correlation/security ->
+        // CORS -> policy/cancellation/deadline -> body limit -> handlers.
+        // CORS therefore also decorates early policy and timeout responses.
         .layer(DefaultBodyLimit::max(state.settings.http.body_limit))
-        .layer(cors)
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
-            middleware::common,
+            middleware::policy,
         ))
+        .layer(cors)
+        .layer(axum_middleware::from_fn(middleware::common))
         .with_state(state)
 }
 async fn ready(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {

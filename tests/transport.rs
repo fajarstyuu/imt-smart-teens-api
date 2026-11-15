@@ -43,6 +43,97 @@ async fn raw(
     }
     (status, body, headers)
 }
+/// A browser must be able to read policy errors, not just successful handlers.
+fn assert_browser_error(status: u16, body: &Value, headers: &axum::http::HeaderMap, code: &str) {
+    assert!(status >= 400);
+    assert_eq!(body["error"]["code"], code);
+    assert_eq!(
+        body["request_id"].as_str().unwrap(),
+        headers["x-request-id"]
+    );
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        headers
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .and_then(|v| v.to_str().ok()),
+        Some("http://localhost:5173")
+    );
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_CREDENTIALS], "true");
+}
+
+#[sqlx::test]
+async fn allowed_origin_can_read_csrf_policy_errors(pool: PgPool) {
+    let app = app(pool).await;
+    let (s, b, h) = raw(
+        &app,
+        "POST",
+        "/api/v1/admin/schools",
+        "{}".into(),
+        &[("origin", "http://localhost:5173")],
+    )
+    .await;
+    assert_eq!(s, 403);
+    assert_browser_error(s, &b, &h, "FORBIDDEN");
+    let (s, _, h) = raw(
+        &app,
+        "POST",
+        "/api/v1/admin/schools",
+        "{}".into(),
+        &[("origin", "https://evil.invalid")],
+    )
+    .await;
+    assert_eq!(s, 403);
+    assert!(!h.contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+}
+
+#[sqlx::test]
+async fn allowed_origin_can_read_body_policy_errors(pool: PgPool) {
+    let app = app(pool).await;
+    let (s, b, h) = raw(
+        &app,
+        "POST",
+        "/api/v1/admin/schools",
+        String::new(),
+        &[
+            ("origin", "http://localhost:5173"),
+            ("content-length", "70000"),
+        ],
+    )
+    .await;
+    assert_eq!(s, 413);
+    assert_browser_error(s, &b, &h, "BODY_TOO_LARGE");
+}
+
+#[sqlx::test]
+async fn allowed_origin_can_read_rate_policy_errors(pool: PgPool) {
+    let app = app(pool).await;
+    // Missing CSRF is cheap but still consumes the real login limiter.
+    for _ in 0..10 {
+        assert_eq!(
+            raw(
+                &app,
+                "POST",
+                "/api/v1/admin/sessions",
+                String::new(),
+                &[("origin", "http://localhost:5173")]
+            )
+            .await
+            .0,
+            403
+        );
+    }
+    let (s, b, h) = raw(
+        &app,
+        "POST",
+        "/api/v1/admin/sessions",
+        String::new(),
+        &[("origin", "http://localhost:5173")],
+    )
+    .await;
+    assert_eq!(s, 429);
+    assert_browser_error(s, &b, &h, "RATE_LIMITED");
+}
+
 #[sqlx::test]
 async fn malformed_json_media_body_path_and_query_rejections_use_envelope(pool: PgPool) {
     let id = admin(&pool, true).await;

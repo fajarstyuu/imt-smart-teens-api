@@ -15,6 +15,30 @@ pub struct AppState {
     pub settings: Arc<Settings>,
     pub readiness: Readiness,
     pub limiter: Arc<RateLimiter>,
+    pub requests: RequestCancellation,
+}
+
+/// Sticky broadcast cancellation for HTTP work at the total shutdown deadline.
+/// Receivers created after cancellation must also stop; a bare Notify would
+/// lose that signal. Clones share one watch sender without spawning tasks.
+#[derive(Clone)]
+pub struct RequestCancellation(tokio::sync::watch::Sender<bool>);
+impl Default for RequestCancellation {
+    fn default() -> Self {
+        Self(tokio::sync::watch::channel(false).0)
+    }
+}
+impl RequestCancellation {
+    /// Stop existing and subsequent request futures, allowing transaction drop.
+    pub fn cancel(&self) {
+        self.0.send_replace(true);
+    }
+
+    /// Wait until cancellation, including when it preceded subscription.
+    pub async fn cancelled(&self) {
+        let mut receiver = self.0.subscribe();
+        let _ = receiver.wait_for(|cancelled| *cancelled).await;
+    }
 }
 /// The pool is isolated to health infrastructure, not available as a handler shortcut.
 #[derive(Clone)]

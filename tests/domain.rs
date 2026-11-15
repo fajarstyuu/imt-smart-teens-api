@@ -19,6 +19,17 @@ fn names_reject_empty_or_overlong_but_allow_one_word() {
     assert!(StudentName::parse("\n ").is_err());
 }
 #[test]
+fn domain_does_not_depend_on_application_error_contracts() {
+    // Source-level boundary guard complements value-level validation tests in
+    // this single crate, where Rust otherwise permits upward module imports.
+    let domain = include_str!("../src/modules/identity/domain.rs");
+    assert!(
+        !domain.contains("shared::application"),
+        "domain imports application layer"
+    );
+}
+
+#[test]
 fn date_requires_real_iso_calendar_date() {
     assert!(FormDate::parse("2024-02-29").is_ok());
     for value in ["2025-02-29", "2026-2-01", "2026-11-15T00:00:00Z", ""] {

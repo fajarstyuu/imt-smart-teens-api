@@ -44,6 +44,7 @@ pub async fn assemble(pool: PgPool, settings: Settings) -> Result<AppState> {
         settings: Arc::new(settings),
         readiness: Readiness::new(pool),
         limiter: Arc::new(RateLimiter::default()),
+        requests: Default::default(),
     })
 }
 /// Main delegates here. Commands never accept passwords as CLI arguments.
@@ -93,16 +94,16 @@ async fn run_command() -> Result<()> {
         result?;
         return Ok(());
     }
-    let result = serve(pool.clone(), settings).await;
-    pool.close().await;
-    result?;
-    Ok(())
+    // Serving owns the total shutdown budget, including pool cleanup. Never
+    // append an unbounded close here after that budget has already expired.
+    serve(pool, settings).await
 }
 async fn serve(pool: PgPool, settings: Settings) -> Result<()> {
     let bind = settings.bind;
-    let deadline = settings.shutdown_timeout;
-    let state = assemble(pool, settings).await?;
+    let grace_period = settings.shutdown_timeout;
+    let state = assemble(pool.clone(), settings).await?;
     let draining = state.readiness.draining.clone();
+    let requests = state.requests.clone();
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .context("HTTP listener failed")?;
@@ -116,14 +117,39 @@ async fn serve(pool: PgPool, settings: Settings) -> Result<()> {
     .into_future();
     tokio::pin!(server);
     tracing::info!(address=%bind,"HTTP server listening");
-    tokio::select! {
-     result=&mut server=>{result.context("HTTP server failed")?;},
-     result=shutdown::signal()=>{
-      result?;draining.store(true,std::sync::atomic::Ordering::Relaxed);notify.notify_one();
-      tokio::time::timeout(deadline,&mut server).await.context("HTTP shutdown deadline exceeded")??;
-     }
+    let (completed, deadline) = tokio::select! {
+        result = &mut server => (Some(result), tokio::time::Instant::now() + grace_period),
+        result = shutdown::signal() => {
+            result?;
+            (None, tokio::time::Instant::now() + grace_period)
+        }
+    };
+    draining.store(true, std::sync::atomic::Ordering::Relaxed);
+    notify.notify_one();
+    let cleanup = async {
+        // Axum spawns connection tasks. A graceful serve completes only when
+        // those tasks finish; dropping just this future does NOT abort them.
+        let result = match completed {
+            Some(result) => result,
+            None => server.await,
+        }
+        .context("HTTP server failed");
+        pool.close().await;
+        result
+    };
+    match tokio::time::timeout_at(deadline, cleanup).await {
+        Ok(result) => result,
+        Err(_) => {
+            requests.cancel();
+            // SQLx marks the pool closed synchronously, but its returned future
+            // may wait for checked-out/closing connections indefinitely. Do not
+            // await it past our deadline. Request cancellation drops in-flight
+            // transactions; returning failure lets main tear down the runtime,
+            // including Axum connection tasks and SQLx background cleanup.
+            drop(pool.close());
+            bail!("HTTP shutdown deadline exceeded");
+        }
     }
-    Ok(())
 }
 async fn provision(pool: PgPool) -> Result<()> {
     let email = normalize_email(&std::env::var("ADMIN_EMAIL").context("ADMIN_EMAIL is required")?)?;
