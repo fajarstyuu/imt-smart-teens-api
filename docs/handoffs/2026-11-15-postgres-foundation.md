@@ -1,7 +1,7 @@
 # postgres-foundation — Local PostgreSQL and backend contract design
 
 - Date (Asia/Jakarta): 2026-11-15
-- Status: in_progress
+- Status: ready_for_review
 - Context / objective: Implement the approved PostgreSQL-first plan, API inventory and database design, including admin terminology and school CMS.
 - Owner / implementor: Mochi, inline gpt-6.1-sol; exact reasoning effort unknown.
 - Reviewer: pending independent read-only review.
@@ -30,11 +30,20 @@
 - Initial Docker absence confirmed. Approved official apt installation completed; Docker 29.9.3, Compose v5.7.1, sudo docker info succeeds.
 - No existing container runtime packages found during conflict check; port 55432 had no listener.
 - Git worktree confirmed on chore/postgres-foundation; main remains untouched.
-- Database service and project checks: pending actual RED/GREEN execution.
+- Compose TDD: 3 tests first failed because compose.yaml was absent; same tests passed after implementation. Command: `python3 -m unittest discover -s tests/infra -p 'test_*.py' -v`.
+- Runtime RED: `sudo env IMT_ALLOW_DB_SMOKE=1 bash tests/infra/smoke_postgres.sh` failed with service postgres not running before first startup.
+- Runtime GREEN: actual PostgreSQL healthy; smoke passed TCP SELECT 1, wrong-password rejection, sentinel persistence through force-recreate and cleanup. Repeated successful smoke runs; no business schema migrated.
+- `sudo docker compose --env-file .env port postgres 5432`: 127.0.0.1:55432.
+- Linux host-published-port SQL via temporary postgres client container with --network host: SELECT 1 returned 1.
+- `stat -c '%a %n' .env`: 600 .env; .env ignored, .env.example not ignored; no secret values printed or tracked.
+- `git diff --check`: clean; API/DB decision checks passed, 28 proposed tables verified by extraction. These documentation checks do not establish endpoint/constraint behavior.
+- Resolved PostgreSQL image: postgres@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536.
+- Runtime project postgres-foundation; named volume postgres-foundation_postgres_data; private local development DB remains running.
+- Host: nginx and Docker services active. Existing UFW rules untouched; binding is loopback, not a reliance on UFW to filter Docker traffic.
 - Cargo/frontend tests: not applicable; neither application implementation nor frontend edits in scope.
 
 ## Review and next steps
 
 - Review status: pending.
-- Next: write failing Compose contract tests, implement private persistent PostgreSQL config, run actual runtime smoke, publish contracts and obtain fresh review.
+- Next: independent read-only whole-branch review, address material findings with RED/GREEN tests, run final verification and finalize this handoff. No push/merge authorized.
 - Remaining production gates: least-privilege roles, backup/restore, retention/access administration, deployment hardening.
