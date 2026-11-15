@@ -1,6 +1,7 @@
 //! Admin-only allowlisted editor DTOs. No persistence or SQL is reachable from handlers.
+mod dto;
 use super::application::*;
-use crate::transport::http::editor::{ListQuery, Revision, version_dto};
+use crate::transport::http::editor::{Data, ListQuery, PageDto, PageMeta, Revision};
 use crate::{
     modules::identity::application::Authenticated,
     shared::error::AppError,
@@ -16,8 +17,8 @@ use axum::{
     http::StatusCode,
     routing::{get, post, put},
 };
+use dto::{LessonEditorDto, PathEditorDto, editor_dto, path_dto};
 use serde::Deserialize;
-use serde_json::{Value, json};
 use uuid::Uuid;
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -73,12 +74,6 @@ struct Order {
     lesson_ids: Vec<Uuid>,
     expected_revision: i64,
 }
-pub fn editor_dto(l: LessonEditor) -> Value {
-    json!({"id":l.id,"state":l.state.as_str(),"revision":l.revision,"position":l.position,"draft":{"title":l.draft.title,"description":l.draft.description,"sections":l.draft.sections.into_iter().map(|s|json!({"id":s.id,"title":s.title,"body":s.body,"required":s.required})).collect::<Vec<_>>()},"versions":l.versions.into_iter().map(version_dto).collect::<Vec<_>>()})
-}
-pub fn path_dto(p: PathEditor) -> Value {
-    json!({"id":p.id,"revision":p.revision,"lesson_ids":p.lesson_ids,"paired_bank_id":p.paired_bank_id,"quiz_bank_id":p.quiz_bank_id,"versions":p.versions.into_iter().map(version_dto).collect::<Vec<_>>(),"published":p.published.map(|m|json!({"id":m.id,"version":m.version,"paired_bank_version_id":m.paired_bank_version_id,"quiz_bank_version_id":m.quiz_bank_version_id,"lessons":m.lessons.into_iter().map(|(id,v,pos)|json!({"lesson_id":id,"lesson_version_id":v,"position":pos})).collect::<Vec<_>>()}))})
-}
 fn audit(a: &Authenticated) -> Result<crate::modules::identity::application::AuditActor, ApiError> {
     Ok(actor(
         &a.principal,
@@ -90,28 +85,33 @@ async fn list(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiQuery(q): ApiQuery<ListQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<PageDto<LessonEditorDto>>, ApiError> {
     let q = q.core()?;
     let (limit, offset) = (q.limit, q.offset);
     let p = s.lesson_cms.list(&a.principal, q).await?;
-    Ok(Json(
-        json!({"data":p.rows.into_iter().map(editor_dto).collect::<Vec<_>>(),"meta":{"limit":limit,"offset":offset,"total":p.total}}),
-    ))
+    Ok(Json(PageDto {
+        data: p.rows.into_iter().map(editor_dto).collect(),
+        meta: PageMeta {
+            limit,
+            offset,
+            total: p.total,
+        },
+    }))
 }
 async fn detail(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(id): ApiPath<Uuid>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":editor_dto(s.lesson_cms.get(&a.principal,id).await?)}),
-    ))
+) -> Result<Json<Data<LessonEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: editor_dto(s.lesson_cms.get(&a.principal, id).await?),
+    }))
 }
 async fn create(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiJson(i): ApiJson<LessonInput>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<(StatusCode, Json<Data<LessonEditorDto>>), ApiError> {
     if i.expected_revision.is_some() {
         return Err(AppError::Invalid("INVALID_INPUT").into());
     }
@@ -126,65 +126,90 @@ async fn create(
             pos,
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(json!({"data":editor_dto(l)}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(Data {
+            data: editor_dto(l),
+        }),
+    ))
 }
 async fn update(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(id): ApiPath<Uuid>,
     ApiJson(i): ApiJson<LessonInput>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<Data<LessonEditorDto>>, ApiError> {
     let rev = i
         .expected_revision
         .ok_or(AppError::Invalid("REVISION_REQUIRED"))?;
     let pos = i.position;
-    Ok(Json(
-        json!({"data":editor_dto(s.lesson_cms.update(&a.principal,audit(&a)?,id,i.draft(),pos,rev).await?)}),
-    ))
+    Ok(Json(Data {
+        data: editor_dto(
+            s.lesson_cms
+                .update(&a.principal, audit(&a)?, id, i.draft(), pos, rev)
+                .await?,
+        ),
+    }))
 }
 async fn publish(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(id): ApiPath<Uuid>,
     ApiJson(i): ApiJson<Revision>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":editor_dto(s.lesson_cms.publish(&a.principal,audit(&a)?,id,i.expected_revision).await?)}),
-    ))
+) -> Result<Json<Data<LessonEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: editor_dto(
+            s.lesson_cms
+                .publish(&a.principal, audit(&a)?, id, i.expected_revision)
+                .await?,
+        ),
+    }))
 }
 async fn archive(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(id): ApiPath<Uuid>,
     ApiJson(i): ApiJson<Revision>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":editor_dto(s.lesson_cms.archive(&a.principal,audit(&a)?,id,i.expected_revision).await?)}),
-    ))
+) -> Result<Json<Data<LessonEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: editor_dto(
+            s.lesson_cms
+                .archive(&a.principal, audit(&a)?, id, i.expected_revision)
+                .await?,
+        ),
+    }))
 }
 pub async fn publish_path(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiJson(i): ApiJson<Revision>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":path_dto(s.lesson_cms.publish_path(&a.principal,audit(&a)?,i.expected_revision).await?)}),
-    ))
+) -> Result<Json<Data<PathEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: path_dto(
+            s.lesson_cms
+                .publish_path(&a.principal, audit(&a)?, i.expected_revision)
+                .await?,
+        ),
+    }))
 }
 async fn path(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":path_dto(s.lesson_cms.path(&a.principal).await?)}),
-    ))
+) -> Result<Json<Data<PathEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: path_dto(s.lesson_cms.path(&a.principal).await?),
+    }))
 }
 async fn order(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiJson(i): ApiJson<Order>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":path_dto(s.lesson_cms.order(&a.principal,audit(&a)?,i.lesson_ids,i.expected_revision).await?)}),
-    ))
+) -> Result<Json<Data<PathEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: path_dto(
+            s.lesson_cms
+                .order(&a.principal, audit(&a)?, i.lesson_ids, i.expected_revision)
+                .await?,
+        ),
+    }))
 }

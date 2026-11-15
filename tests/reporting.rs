@@ -256,6 +256,70 @@ async fn report_states_pending_clear_graded_historical_versions_and_required_sel
     );
     let (_, v, _) = request(&app, "GET", &path, json!(null), &c, &t).await;
     assert_eq!(v["data"][0]["answer_state"], "answered");
+    // Missing fields must not masquerade as explicit nullable grading. Report option
+    // schemas cannot gain private keys while the editor transport is refactored.
+    let row = &v["data"][0];
+    let expected = [
+        "student_id",
+        "student_name",
+        "enrollment_id",
+        "school_id",
+        "school_name_at_enrollment",
+        "bank_id",
+        "bank_version_id",
+        "snapshot_id",
+        "snapshot_question_id",
+        "question_id",
+        "question_version_id",
+        "position",
+        "text",
+        "type",
+        "assessment_type",
+        "attempt_id",
+        "attempt_number",
+        "attempt_status",
+        "answer_revision",
+        "saved_at",
+        "submitted_at",
+        "options",
+        "selected_option_ids",
+        "selected_options",
+        "answer_state",
+        "correctness",
+        "earned_points",
+        "max_points",
+    ];
+    assert_eq!(
+        row.as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected.into_iter().collect()
+    );
+    for option in row["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(row["selected_options"].as_array().unwrap())
+    {
+        assert_eq!(
+            option
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>(),
+            ["id", "text"].into_iter().collect()
+        );
+    }
+    assert_eq!(
+        row["selected_option_ids"][0],
+        row["selected_options"][0]["id"]
+    );
+    assert_eq!(row["max_points"].to_string(), "1.0000");
+    assert!(row["max_points"].is_number());
+    assert_eq!(row["submitted_at"], Value::Null);
     assert_eq!(v["data"][0]["correctness"], Value::Null);
     assert_eq!(v["data"][0]["earned_points"], Value::Null);
     assert_eq!(
@@ -326,6 +390,9 @@ async fn report_states_pending_clear_graded_historical_versions_and_required_sel
     assert_eq!(v["data"][1]["answer_state"], "incorrect");
     assert_eq!(v["data"][1]["earned_points"].to_string(), "0.0000");
     assert_eq!(v["data"][0]["attempt_number"], 1);
+    assert_eq!(v["data"][0]["correctness"], true);
+    assert_eq!(v["data"][1]["correctness"], false);
+    assert!(v["data"][0]["earned_points"].is_number());
     assert_eq!(v["data"][0]["snapshot_id"], pre["snapshot_id"]);
     assert_eq!(
         request(
@@ -417,6 +484,52 @@ async fn report_states_pending_clear_graded_historical_versions_and_required_sel
     );
     let (_, v, _) = request(&app, "GET", &results, json!(null), &c, &t).await;
     assert_eq!(v["data"]["attempts"][0]["score_percent"], 50);
+    let result = &v["data"];
+    assert_eq!(
+        result
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "student",
+            "enrollment",
+            "current_stage",
+            "latest_submitted_at",
+            "attempts",
+            "lessons",
+            "measurements"
+        ]
+        .into_iter()
+        .collect()
+    );
+    let attempt = &result["attempts"][0];
+    assert_eq!(
+        attempt
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "id",
+            "snapshot_id",
+            "assessment_type",
+            "attempt_number",
+            "status",
+            "created_at",
+            "submitted_at",
+            "earned_points",
+            "max_points",
+            "score_percent"
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(attempt["earned_points"].to_string(), "1.0000");
+    assert_eq!(attempt["max_points"].to_string(), "2.0000");
+    assert!(attempt["earned_points"].is_number());
 }
 #[sqlx::test(migrations = "./migrations")]
 async fn report_filters_are_strict_and_date_submission_ranges_are_precise(pool: PgPool) {

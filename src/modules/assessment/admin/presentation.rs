@@ -1,4 +1,5 @@
 //! Thin admin question DTO adapters; private keys are restricted to this authenticated editor.
+mod dto;
 use super::application::*;
 use crate::{
     modules::{
@@ -7,7 +8,7 @@ use crate::{
     shared::error::AppError,
     transport::http::{
         AppState,
-        editor::{ListQuery, Revision, version_dto},
+        editor::{Data, ListQuery, PageDto, PageMeta, Revision},
         error::{ApiError, REQUEST_ID},
         extractors::{AdminSession, ApiJson, ApiPath, ApiQuery},
     },
@@ -18,8 +19,8 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
+use dto::{BankEditorDto, QuestionEditorDto, bank_dto, question_dto};
 use serde::Deserialize;
-use serde_json::{Value, json};
 use uuid::Uuid;
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -84,59 +85,67 @@ fn audit(a: &Authenticated) -> Result<crate::modules::identity::application::Aud
         REQUEST_ID.with(Clone::clone),
     )?)
 }
-pub fn bank_dto(b: BankEditor) -> Value {
-    json!({"id":b.id,"kind":b.kind,"state":b.state.as_str(),"revision":b.revision,"versions":b.versions.into_iter().map(version_dto).collect::<Vec<_>>()})
-}
-fn question_dto(q: QuestionEditor) -> Value {
-    json!({"id":q.id,"bank_id":q.bank_id,"state":q.state.as_str(),"revision":q.revision,"position":q.position,"draft":{"text":q.draft.text,"type":q.draft.question_type.as_str(),"options":q.draft.options.into_iter().map(|o|json!({"id":o.id,"text":o.text})).collect::<Vec<_>>(),"correct_option_ids":q.draft.correct_option_ids,"required":q.draft.required},"versions":q.versions.into_iter().map(version_dto).collect::<Vec<_>>()})
-}
 async fn banks(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<PageDto<BankEditorDto>>, ApiError> {
     let rows = s.bank_cms.banks(&a.principal).await?;
-    let total = rows.len();
-    Ok(Json(
-        json!({"data":rows.into_iter().map(bank_dto).collect::<Vec<_>>(),"meta":{"limit":2,"offset":0,"total":total}}),
-    ))
+    let total = rows.len() as i64;
+    Ok(Json(PageDto {
+        data: rows.into_iter().map(bank_dto).collect(),
+        meta: PageMeta {
+            limit: 2,
+            offset: 0,
+            total,
+        },
+    }))
 }
 async fn questions(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(bank): ApiPath<Uuid>,
     ApiQuery(q): ApiQuery<ListQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<PageDto<QuestionEditorDto>>, ApiError> {
     let q = q.core()?;
     let (limit, offset) = (q.limit, q.offset);
     let p = s.bank_cms.questions(&a.principal, bank, q).await?;
-    Ok(Json(
-        json!({"data":p.rows.into_iter().map(question_dto).collect::<Vec<_>>(),"meta":{"limit":limit,"offset":offset,"total":p.total}}),
-    ))
+    Ok(Json(PageDto {
+        data: p.rows.into_iter().map(question_dto).collect(),
+        meta: PageMeta {
+            limit,
+            offset,
+            total: p.total,
+        },
+    }))
 }
 async fn detail(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath((b, id)): ApiPath<(Uuid, Uuid)>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":question_dto(s.bank_cms.question(&a.principal,b,id).await?)}),
-    ))
+) -> Result<Json<Data<QuestionEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: question_dto(s.bank_cms.question(&a.principal, b, id).await?),
+    }))
 }
 async fn create(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(b): ApiPath<Uuid>,
     ApiJson(i): ApiJson<QuestionInput>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<(StatusCode, Json<Data<QuestionEditorDto>>), ApiError> {
     if i.expected_revision.is_some() {
         return Err(AppError::Invalid("INVALID_INPUT").into());
     }
     let pos = i.position;
     Ok((
         StatusCode::CREATED,
-        Json(
-            json!({"data":question_dto(s.bank_cms.create(&a.principal,audit(&a)?,b,i.draft()?,pos).await?)}),
-        ),
+        Json(Data {
+            data: question_dto(
+                s.bank_cms
+                    .create(&a.principal, audit(&a)?, b, i.draft()?, pos)
+                    .await?,
+            ),
+        }),
     ))
 }
 async fn update(
@@ -144,32 +153,44 @@ async fn update(
     AdminSession(a): AdminSession,
     ApiPath(ids): ApiPath<(Uuid, Uuid)>,
     ApiJson(i): ApiJson<QuestionInput>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<Data<QuestionEditorDto>>, ApiError> {
     let rev = i
         .expected_revision
         .ok_or(AppError::Invalid("REVISION_REQUIRED"))?;
     let pos = i.position;
-    Ok(Json(
-        json!({"data":question_dto(s.bank_cms.update(&a.principal,audit(&a)?,ids,i.draft()?,pos,rev).await?)}),
-    ))
+    Ok(Json(Data {
+        data: question_dto(
+            s.bank_cms
+                .update(&a.principal, audit(&a)?, ids, i.draft()?, pos, rev)
+                .await?,
+        ),
+    }))
 }
 async fn archive(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(ids): ApiPath<(Uuid, Uuid)>,
     ApiJson(i): ApiJson<Revision>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":question_dto(s.bank_cms.archive(&a.principal,audit(&a)?,ids,i.expected_revision).await?)}),
-    ))
+) -> Result<Json<Data<QuestionEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: question_dto(
+            s.bank_cms
+                .archive(&a.principal, audit(&a)?, ids, i.expected_revision)
+                .await?,
+        ),
+    }))
 }
 async fn publish(
     State(s): State<AppState>,
     AdminSession(a): AdminSession,
     ApiPath(b): ApiPath<Uuid>,
     ApiJson(i): ApiJson<Revision>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"data":bank_dto(s.bank_cms.publish(&a.principal,audit(&a)?,b,i.expected_revision).await?)}),
-    ))
+) -> Result<Json<Data<BankEditorDto>>, ApiError> {
+    Ok(Json(Data {
+        data: bank_dto(
+            s.bank_cms
+                .publish(&a.principal, audit(&a)?, b, i.expected_revision)
+                .await?,
+        ),
+    }))
 }
