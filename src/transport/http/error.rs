@@ -1,0 +1,95 @@
+//! One safe Indonesian error envelope, including extractor and middleware failures.
+use crate::shared::application::AppError;
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use serde_json::json;
+tokio::task_local! {pub static REQUEST_ID:String;}
+pub struct ApiError {
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+}
+impl ApiError {
+    pub fn transport(status: StatusCode, code: &'static str) -> Self {
+        Self {
+            status,
+            code,
+            message: match status {
+                StatusCode::BAD_REQUEST => "Permintaan tidak valid.",
+                StatusCode::PAYLOAD_TOO_LARGE => "Data terlalu besar.",
+                StatusCode::UNSUPPORTED_MEDIA_TYPE => "Gunakan format JSON.",
+                StatusCode::METHOD_NOT_ALLOWED => "Metode tidak diizinkan.",
+                StatusCode::NOT_FOUND => "Data tidak ditemukan.",
+                StatusCode::TOO_MANY_REQUESTS => "Terlalu banyak permintaan. Coba lagi nanti.",
+                StatusCode::GATEWAY_TIMEOUT => "Waktu permintaan habis. Coba lagi.",
+                _ => "Permintaan tidak dapat diproses.",
+            },
+        }
+    }
+}
+impl From<AppError> for ApiError {
+    fn from(value: AppError) -> Self {
+        let (status, code, message) = match value {
+            AppError::Invalid(code) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                code,
+                "Periksa kembali data yang dimasukkan.",
+            ),
+            AppError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED",
+                "Sesi tidak valid atau kredensial salah. Silakan masuk kembali.",
+            ),
+            AppError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                "Anda tidak memiliki izin untuk tindakan ini.",
+            ),
+            AppError::NotFound => (StatusCode::NOT_FOUND, "NOT_FOUND", "Data tidak ditemukan."),
+            AppError::Conflict(code) => (
+                StatusCode::CONFLICT,
+                code,
+                match code {
+                    "SCHOOL_NAME_EXISTS" => "Nama sekolah sudah terdaftar.",
+                    "SCHOOL_ARCHIVED" => "Sekolah telah diarsipkan.",
+                    "SCHOOL_REVISION_CONFLICT" => {
+                        "Data telah berubah. Muat ulang sebelum menyimpan."
+                    }
+                    _ => "Tindakan bertentangan dengan kondisi data saat ini.",
+                },
+            ),
+            AppError::Unavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SERVICE_UNAVAILABLE",
+                "Layanan sementara tidak tersedia. Coba lagi.",
+            ),
+            AppError::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "Terjadi kesalahan. Coba lagi.",
+            ),
+        };
+        Self {
+            status,
+            code,
+            message,
+        }
+    }
+}
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let request_id = REQUEST_ID
+            .try_with(Clone::clone)
+            .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+        (
+            self.status,
+            Json(
+                json!({"error":{"code":self.code,"message":self.message},"request_id":request_id}),
+            ),
+        )
+            .into_response()
+    }
+}

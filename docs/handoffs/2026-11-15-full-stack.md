@@ -4,7 +4,7 @@
 - Status: in_progress
 - Objective: implement the approved v1 API/database design and connect the existing frontend, including admin role and school CMS.
 - Owner/orchestrator: Mochi; current session gpt-6.1-sol, exact reasoning effort unknown.
-- Implementation/review agents: assigned per scoped tasks; actual IDs and test evidence recorded as returned. No Luna/high routing is claimed.
+- Implementation/review agents: Task1 original implementor sa-0-7871c2ae, delegation deleg_666b18fb, BASE 77eda42153d14eb7c48a0014ed3a5d2a61e8dda5; runtime listed gpt-6.1-sol, exact effort unknown. VPS shutdown interrupted its terminal result; no live worker after reboot. Parent recovered existing source and independently passed 23 Rust tests, 3 infrastructure tests, fmt/clippy/build. Task1 is ready_for_review, not accepted; later tasks pending. No Luna/high routing is claimed.
 - Authorization: owner requested local foundation merge followed by backend/frontend work; explicitly approved implementation subagents using available models in clarification UI.
 
 ## Scope and source
