@@ -33,6 +33,9 @@ pub async fn assemble(pool: PgPool, settings: Settings) -> Result<AppState> {
         .hash("non-account-constant-time-verification-only".into())
         .await?;
     Ok(AppState {
+        reports: crate::modules::reporting::application::Reports::new(Arc::new(
+            crate::modules::reporting::infrastructure::PgReports::new(pool.clone()),
+        )),
         bank_cms: crate::modules::assessment::admin::application::BankCms::new(Arc::new(
             crate::modules::assessment::admin::infrastructure::PgBankCms::new(pool.clone()),
         )),
