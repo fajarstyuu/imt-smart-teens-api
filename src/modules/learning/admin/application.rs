@@ -1,4 +1,5 @@
 //! Typed editorial commands and policies; draft identities never become published row IDs.
+mod publication;
 pub use crate::shared::editing::{
     ContentQuery, ContentState, Page, Version, check_revision, revision, text,
 };
@@ -7,6 +8,10 @@ use crate::{
     shared::error::{AppError, AppResult},
 };
 use async_trait::async_trait;
+pub use publication::{
+    PathPublication, PathPublicationTransaction, PublishedLesson, PublishedLessonVersion,
+    publish_path_in_transaction,
+};
 use std::{collections::HashSet, sync::Arc};
 use uuid::Uuid;
 #[derive(Clone, Debug)]
@@ -90,7 +95,7 @@ pub trait LessonStore: Send + Sync {
     ) -> AppResult<LessonEditor>;
     async fn publish(&self, id: Uuid, revision: i64, actor: AuditActor) -> AppResult<LessonEditor>;
     async fn archive(&self, id: Uuid, revision: i64, actor: AuditActor) -> AppResult<LessonEditor>;
-    async fn publish_path(&self, revision: i64, actor: AuditActor) -> AppResult<PathEditor>;
+    async fn begin_path_publication(&self) -> AppResult<Box<dyn PathPublicationTransaction>>;
     async fn path(&self) -> AppResult<PathEditor>;
     async fn order(
         &self,
@@ -182,7 +187,7 @@ impl LessonCms {
     ) -> AppResult<PathEditor> {
         authorize(p)?;
         revision(rev)?;
-        self.store.publish_path(rev, a).await
+        publish_path_in_transaction(self.store.begin_path_publication().await?, rev, a).await
     }
     pub async fn path(&self, p: &Principal) -> AppResult<PathEditor> {
         authorize(p)?;

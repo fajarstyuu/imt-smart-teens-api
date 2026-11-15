@@ -1,4 +1,5 @@
 //! Typed admin commands and question publication validation. No student DTO reuse.
+mod published;
 use crate::{
     modules::{
         identity::application::authorize_content as authorize,
@@ -10,6 +11,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
+pub use published::{BankKind, PublishedBank, PublishedBankReader, PublishedQuestion};
 use std::{collections::HashSet, sync::Arc};
 use uuid::Uuid;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

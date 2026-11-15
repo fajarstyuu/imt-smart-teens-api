@@ -1,4 +1,5 @@
 //! PostgreSQL editor persistence. Every mutation and its redacted audit commit atomically.
+mod publication;
 use super::application::*;
 use crate::platform::editor::{audit, versions};
 use crate::{
@@ -291,84 +292,10 @@ impl LessonStore for PgLessonCms {
         tx.commit().await.map_err(failure)?;
         Ok(out)
     }
-    async fn publish_path(&self, rev: i64, a: AuditActor) -> AppResult<PathEditor> {
-        let mut tx = self.pool.begin().await.map_err(failure)?;
-        let p = path(&mut tx, true).await?;
-        check_revision(p.revision, rev)?;
-        if p.lesson_ids.is_empty() {
-            return Err(AppError::Invalid("EMPTY_LEARNING_PATH"));
-        }
-        let unique: std::collections::HashSet<_> = p.lesson_ids.iter().collect();
-        if unique.len() != p.lesson_ids.len() {
-            return Err(AppError::Invalid("INVALID_PATH_ORDER"));
-        }
-        // Global CMS lock order: path -> banks sorted by UUID -> lesson roots sorted by UUID.
-        let mut banks = [p.paired_bank_id, p.quiz_bank_id];
-        banks.sort();
-        for bank in banks {
-            sqlx::query("SELECT id FROM assessment_banks WHERE id=$1 FOR UPDATE")
-                .bind(bank)
-                .execute(&mut *tx)
-                .await
-                .map_err(failure)?;
-        }
-        let mut bank_versions = vec![];
-        for (bank, kind) in [(p.paired_bank_id, "paired"), (p.quiz_bank_id, "quiz")] {
-            let version:Uuid=sqlx::query_scalar("SELECT v.id FROM assessment_bank_versions v JOIN assessment_banks b ON b.id=v.bank_id WHERE b.id=$1 AND b.kind=$2 AND b.state<>'archived' ORDER BY v.version DESC LIMIT 1").bind(bank).bind(kind).fetch_optional(&mut *tx).await.map_err(failure)?.ok_or(AppError::Conflict("CONTENT_NOT_AVAILABLE"))?;
-            crate::modules::assessment::admin::infrastructure::validate_published_bank(
-                &mut tx, version, bank,
-            )
-            .await?;
-            bank_versions.push(version);
-        }
-        let mut sorted = p.lesson_ids.clone();
-        sorted.sort();
-        for id in sorted {
-            sqlx::query("SELECT id FROM learning_lessons WHERE id=$1 FOR UPDATE")
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(failure)?;
-        }
-        let mut items = vec![];
-        for id in &p.lesson_ids {
-            let row=sqlx::query("SELECT v.id,v.title,v.description FROM learning_lesson_versions v JOIN learning_lessons l ON l.id=v.lesson_id WHERE l.id=$1 AND l.state<>'archived' ORDER BY v.version DESC LIMIT 1").bind(id).fetch_optional(&mut *tx).await.map_err(failure)?.ok_or(AppError::Conflict("CONTENT_NOT_AVAILABLE"))?;
-            let version: Uuid = row.try_get("id").map_err(failure)?;
-            let rows=sqlx::query("SELECT section_key,title,body,required FROM learning_sections WHERE lesson_version_id=$1 ORDER BY position").bind(version).fetch_all(&mut *tx).await.map_err(failure)?;
-            let mut sections = vec![];
-            for r in rows {
-                sections.push(SectionDraft {
-                    id: r.try_get("section_key").map_err(failure)?,
-                    title: r.try_get("title").map_err(failure)?,
-                    body: r.try_get("body").map_err(failure)?,
-                    required: r.try_get("required").map_err(failure)?,
-                });
-            }
-            LessonDraft {
-                title: row.try_get("title").map_err(failure)?,
-                description: row.try_get("description").map_err(failure)?,
-                sections,
-            }
-            .validate(true)?;
-            items.push(version);
-        }
-        let id = Uuid::new_v4();
-        let number = p.versions.first().map_or(1, |v| v.version + 1);
-        sqlx::query("INSERT INTO learning_path_versions(id,version,paired_bank_version_id,quiz_bank_version_id) VALUES($1,$2,$3,$4)").bind(id).bind(number).bind(bank_versions[0]).bind(bank_versions[1]).execute(&mut *tx).await.map_err(failure)?;
-        for (i, v) in items.iter().enumerate() {
-            sqlx::query("INSERT INTO learning_path_items(path_version_id,lesson_version_id,position) VALUES($1,$2,$3)").bind(id).bind(v).bind(i as i32+1).execute(&mut *tx).await.map_err(failure)?;
-        }
-        sqlx::query(
-            "UPDATE learning_path_drafts SET revision=revision+1,updated_at=now() WHERE id=$1",
-        )
-        .bind(p.id)
-        .execute(&mut *tx)
-        .await
-        .map_err(failure)?;
-        audit(&mut tx, &a, "path.publish", "path", p.id, rev + 1).await?;
-        let out = path(&mut tx, false).await?;
-        tx.commit().await.map_err(failure)?;
-        Ok(out)
+    async fn begin_path_publication(&self) -> AppResult<Box<dyn PathPublicationTransaction>> {
+        Ok(Box::new(publication::PgPathPublication::new(
+            self.pool.begin().await.map_err(failure)?,
+        )))
     }
     async fn path(&self) -> AppResult<PathEditor> {
         let mut tx = self.pool.begin().await.map_err(failure)?;
