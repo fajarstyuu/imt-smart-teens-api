@@ -25,6 +25,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/admin/lessons/{id}/publication", post(publish))
         .route("/api/v1/admin/lessons/{id}/archive", post(archive))
         .route("/api/v1/admin/learning-path", get(path))
+        .route(
+            "/api/v1/admin/learning-path/publication",
+            post(publish_path),
+        )
         .route("/api/v1/admin/learning-path/order", put(order))
 }
 #[derive(Deserialize)]
@@ -179,6 +183,15 @@ async fn archive(
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
         json!({"data":editor_dto(s.lesson_cms.archive(&a.principal,audit(&a)?,id,i.expected_revision).await?)}),
+    ))
+}
+pub async fn publish_path(
+    State(s): State<AppState>,
+    AdminSession(a): AdminSession,
+    ApiJson(i): ApiJson<Revision>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        json!({"data":path_dto(s.lesson_cms.publish_path(&a.principal,audit(&a)?,i.expected_revision).await?)}),
     ))
 }
 async fn path(

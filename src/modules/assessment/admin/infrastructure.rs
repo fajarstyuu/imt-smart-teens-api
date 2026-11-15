@@ -126,6 +126,53 @@ fn editable(q: &QuestionEditor, rev: i64) -> AppResult<()> {
     }
     Ok(())
 }
+/// Validate immutable references again when a learning manifest admits a published bank.
+/// The caller holds the bank root lock in the encompassing publication transaction.
+pub(crate) async fn validate_published_bank(
+    c: &mut PgConnection,
+    version: Uuid,
+    bank: Uuid,
+) -> AppResult<()> {
+    let rows=sqlx::query("SELECT v.id,v.text,v.type,v.required,v.scoring_rule,(v.max_points*10000)::bigint AS units,q.bank_id,q.state,i.position FROM assessment_bank_items i JOIN assessment_question_versions v ON v.id=i.question_version_id JOIN assessment_questions q ON q.id=v.question_id WHERE i.bank_version_id=$1 ORDER BY i.position").bind(version).fetch_all(&mut *c).await.map_err(failure)?;
+    let mut weights = vec![];
+    let mut positions = HashSet::new();
+    for r in rows {
+        let id: Uuid = r.try_get("id").map_err(failure)?;
+        let pos: i32 = r.try_get("position").map_err(failure)?;
+        if r.try_get::<Uuid, _>("bank_id").map_err(failure)? != bank
+            || r.try_get::<String, _>("state").map_err(failure)? == "archived"
+            || r.try_get::<String, _>("scoring_rule").map_err(failure)? != "exact_set_v1"
+            || pos < 1
+            || !positions.insert(pos)
+        {
+            return Err(AppError::Invalid("INVALID_PUBLISHED_BANK"));
+        }
+        let options=sqlx::query("SELECT id,text,is_correct FROM assessment_options WHERE question_version_id=$1 ORDER BY position").bind(id).fetch_all(&mut *c).await.map_err(failure)?;
+        let mut opts = vec![];
+        let mut keys = vec![];
+        for o in options {
+            let oid = o.try_get("id").map_err(failure)?;
+            opts.push(OptionDraft {
+                id: oid,
+                text: o.try_get("text").map_err(failure)?,
+            });
+            if o.try_get::<bool, _>("is_correct").map_err(failure)? {
+                keys.push(oid);
+            }
+        }
+        QuestionDraft {
+            text: r.try_get("text").map_err(failure)?,
+            question_type: QuestionType::parse(r.try_get("type").map_err(failure)?)?,
+            required: r.try_get("required").map_err(failure)?,
+            options: opts,
+            correct_option_ids: keys,
+        }
+        .validate()?;
+        weights.push(r.try_get::<i64, _>("units").map_err(failure)?);
+    }
+    validate_score_budget(weights)?;
+    Ok(())
+}
 #[async_trait]
 impl BankStore for PgBankCms {
     async fn banks(&self) -> AppResult<Vec<BankEditor>> {

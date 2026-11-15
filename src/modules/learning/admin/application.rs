@@ -147,6 +147,7 @@ pub trait LessonStore: Send + Sync {
     ) -> AppResult<LessonEditor>;
     async fn publish(&self, id: Uuid, revision: i64, actor: AuditActor) -> AppResult<LessonEditor>;
     async fn archive(&self, id: Uuid, revision: i64, actor: AuditActor) -> AppResult<LessonEditor>;
+    async fn publish_path(&self, revision: i64, actor: AuditActor) -> AppResult<PathEditor>;
     async fn path(&self) -> AppResult<PathEditor>;
     async fn order(
         &self,
@@ -229,6 +230,16 @@ impl LessonCms {
         authorize(p)?;
         revision(rev)?;
         self.store.archive(id, rev, a).await
+    }
+    pub async fn publish_path(
+        &self,
+        p: &Principal,
+        a: AuditActor,
+        rev: i64,
+    ) -> AppResult<PathEditor> {
+        authorize(p)?;
+        revision(rev)?;
+        self.store.publish_path(rev, a).await
     }
     pub async fn path(&self, p: &Principal) -> AppResult<PathEditor> {
         authorize(p)?;
