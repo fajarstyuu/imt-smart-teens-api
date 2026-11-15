@@ -56,6 +56,8 @@ async fn call(
 #[path = "fixtures/student.rs"]
 mod fixture;
 use fixture::content;
+#[path = "fixtures/task2_regressions.rs"]
+mod task2_regressions;
 fn merge_cookie(old: &str, new: &[String]) -> String {
     let mut jar = std::collections::BTreeMap::new();
     for part in old

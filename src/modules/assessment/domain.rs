@@ -86,6 +86,28 @@ impl Question {
         Ok((if correct { self.max_units } else { 0 }, correct))
     }
 }
+/// Maximum aggregate representable by persisted NUMERIC(12,4) earned/max points.
+pub const MAX_BANK_SCORE_UNITS: i64 = 999_999_999_999;
+
+/// Validate complete bank/snapshot weights before admission or any scoring writes.
+/// Task3 publication must call this same policy. Units are exact ten-thousandths;
+/// empty, nonpositive, overflowing or unrepresentable totals are unavailable content.
+pub fn validate_score_budget(weights: impl IntoIterator<Item = i64>) -> AppResult<i64> {
+    let mut total = 0i64;
+    for weight in weights {
+        if weight <= 0 {
+            return Err(AppError::Conflict("CONTENT_NOT_AVAILABLE"));
+        }
+        total = total
+            .checked_add(weight)
+            .filter(|sum| *sum <= MAX_BANK_SCORE_UNITS)
+            .ok_or(AppError::Conflict("CONTENT_NOT_AVAILABLE"))?;
+    }
+    if total == 0 {
+        return Err(AppError::Conflict("CONTENT_NOT_AVAILABLE"));
+    }
+    Ok(total)
+}
 #[derive(Serialize)]
 pub struct AttemptView {
     #[serde(flatten)]

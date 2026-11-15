@@ -19,10 +19,18 @@ pub struct PublishedPath {
     pub lesson_count: i64,
     pub paired_question_count: i64,
     pub quiz_question_count: i64,
+    pub paired_weights: Vec<i64>,
+    pub quiz_weights: Vec<i64>,
 }
 impl PublishedPath {
     /// Reject incomplete/mismatched manifests without creating any enrollment effects.
     pub fn require_available(&self) -> AppResult<()> {
+        crate::modules::assessment::domain::validate_score_budget(
+            self.paired_weights.iter().copied(),
+        )?;
+        crate::modules::assessment::domain::validate_score_budget(
+            self.quiz_weights.iter().copied(),
+        )?;
         if self.lesson_count > 0
             && self.paired_question_count > 0
             && self.quiz_question_count > 0

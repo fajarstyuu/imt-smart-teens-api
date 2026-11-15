@@ -64,19 +64,33 @@ impl LearningRepository for PgStudentTransaction {
             JOIN assessment_bank_versions qv ON qv.id=p.quiz_bank_version_id
             JOIN assessment_banks qb ON qb.id=qv.bank_id
             ORDER BY p.version DESC LIMIT 1").fetch_optional(&mut *self.tx).await.map_err(failure)?;
-        row.map(|r| {
-            Ok(PublishedPath {
-                id: r.try_get("id").map_err(failure)?,
-                paired_bank: r.try_get("paired_bank_version_id").map_err(failure)?,
-                quiz_bank: r.try_get("quiz_bank_version_id").map_err(failure)?,
-                paired_kind: r.try_get("paired_kind").map_err(failure)?,
-                quiz_kind: r.try_get("quiz_kind").map_err(failure)?,
-                lesson_count: r.try_get("lesson_count").map_err(failure)?,
-                paired_question_count: r.try_get("paired_question_count").map_err(failure)?,
-                quiz_question_count: r.try_get("quiz_question_count").map_err(failure)?,
-            })
-        })
-        .transpose()
+        let Some(r) = row else {
+            return Ok(None);
+        };
+        let paired_bank: Uuid = r.try_get("paired_bank_version_id").map_err(failure)?;
+        let quiz_bank: Uuid = r.try_get("quiz_bank_version_id").map_err(failure)?;
+        // Read the selected immutable versions, not a second independently selected latest path.
+        let weights = sqlx::query_as::<_, (Uuid, i64)>("SELECT i.bank_version_id,(q.max_points*10000)::bigint FROM assessment_bank_items i JOIN assessment_question_versions q ON q.id=i.question_version_id WHERE i.bank_version_id=$1 OR i.bank_version_id=$2").bind(paired_bank).bind(quiz_bank).fetch_all(&mut *self.tx).await.map_err(failure)?;
+        Ok(Some(PublishedPath {
+            id: r.try_get("id").map_err(failure)?,
+            paired_bank,
+            quiz_bank,
+            paired_kind: r.try_get("paired_kind").map_err(failure)?,
+            quiz_kind: r.try_get("quiz_kind").map_err(failure)?,
+            lesson_count: r.try_get("lesson_count").map_err(failure)?,
+            paired_question_count: r.try_get("paired_question_count").map_err(failure)?,
+            quiz_question_count: r.try_get("quiz_question_count").map_err(failure)?,
+            paired_weights: weights
+                .iter()
+                .filter(|(id, _)| *id == paired_bank)
+                .map(|(_, w)| *w)
+                .collect(),
+            quiz_weights: weights
+                .iter()
+                .filter(|(id, _)| *id == quiz_bank)
+                .map(|(_, w)| *w)
+                .collect(),
+        }))
     }
     async fn insert_enrollment(
         &mut self,
@@ -169,7 +183,7 @@ impl LearningRepository for PgStudentTransaction {
         Ok(())
     }
     async fn complete_lesson(&mut self, s: StudentScope, version: Uuid) -> AppResult<()> {
-        sqlx::query("UPDATE learning_lesson_progress SET completed_at=COALESCE(completed_at,now()) WHERE enrollment_id=$1 AND lesson_version_id=$2").bind(s.enrollment_id).bind(version).execute(&mut *self.tx).await.map_err(failure)?;
+        sqlx::query("UPDATE learning_lesson_progress SET completed_at=COALESCE(completed_at,GREATEST(clock_timestamp(),opened_at)) WHERE enrollment_id=$1 AND lesson_version_id=$2").bind(s.enrollment_id).bind(version).execute(&mut *self.tx).await.map_err(failure)?;
         Ok(())
     }
     async fn complete_enrollment(&mut self, s: StudentScope) -> AppResult<()> {

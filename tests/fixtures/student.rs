@@ -3,11 +3,15 @@ use sqlx::PgPool;
 use uuid::Uuid;
 /// Two lessons, each with one required section; one single and one multiple question per bank.
 pub async fn content(pool: &PgPool) -> (Uuid, Vec<Uuid>) {
+    weighted_content(pool, [["1", "1"], ["1", "1"]]).await
+}
+/// Construct weights before publication seals the immutable question versions.
+pub async fn weighted_content(pool: &PgPool, weights: [[&str; 2]; 2]) -> (Uuid, Vec<Uuid>) {
     let mut tx = pool.begin().await.unwrap();
     let school = Uuid::new_v4();
     sqlx::query("INSERT INTO identity_schools(id,name,normalized_name) VALUES($1,'Synthetic school','synthetic school')").bind(school).execute(&mut *tx).await.unwrap();
     let mut banks = vec![];
-    for kind in ["paired", "quiz"] {
+    for (kind, weights) in ["paired", "quiz"].into_iter().zip(weights) {
         let bank = Uuid::new_v4();
         let version = Uuid::new_v4();
         banks.push(version);
@@ -27,7 +31,7 @@ pub async fn content(pool: &PgPool) -> (Uuid, Vec<Uuid>) {
             let q = Uuid::new_v4();
             let v = Uuid::new_v4();
             sqlx::query("INSERT INTO assessment_questions(id,bank_id,state,draft_payload,position) VALUES($1,$2,'published','{}',$3)").bind(q).bind(bank).bind(index as i32+1).execute(&mut *tx).await.unwrap();
-            sqlx::query("INSERT INTO assessment_question_versions(id,question_id,version,text,type,required,scoring_rule,max_points) VALUES($1,$2,1,'Synthetic frozen question',$3,true,'exact_set_v1',1)").bind(v).bind(q).bind(typ).execute(&mut *tx).await.unwrap();
+            sqlx::query("INSERT INTO assessment_question_versions(id,question_id,version,text,type,required,scoring_rule,max_points) VALUES($1,$2,1,'Synthetic frozen question',$3,true,'exact_set_v1',$4::text::numeric)").bind(v).bind(q).bind(typ).bind(weights[index]).execute(&mut *tx).await.unwrap();
             for position in 1..=3 {
                 sqlx::query("INSERT INTO assessment_options(id,question_version_id,position,text,is_correct) VALUES($1,$2,$3,$4,$5)").bind(Uuid::new_v4()).bind(v).bind(position).bind(format!("Synthetic option {position}")).bind(position==1 || (*typ=="multiple" && position==2)).execute(&mut *tx).await.unwrap();
             }

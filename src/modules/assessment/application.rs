@@ -116,7 +116,8 @@ impl StudentService {
             let questions = tx.questions(a.snapshot_id).await?;
             let answers = tx.answers(id).await?;
             let mut earned = 0i64;
-            let mut max = 0i64;
+            // Validate the complete pinned aggregate before even per-answer scoring writes.
+            let max = validate_score_budget(questions.iter().map(|q| q.max_units))?;
             for q in &questions {
                 let ids = answers
                     .iter()
@@ -125,7 +126,7 @@ impl StudentService {
                     .unwrap_or(&[]);
                 let (points, correct) = q.score(ids)?;
                 earned = earned.checked_add(points).ok_or(AppError::Internal)?;
-                max = max.checked_add(q.max_units).ok_or(AppError::Internal)?;
+
                 tx.score_answer(id, q.safe.id, points, correct).await?;
             }
             if max <= 0 {
