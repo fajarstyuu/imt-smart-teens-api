@@ -1,10 +1,8 @@
 //! Snapshot-owned question models and pure answer/scoring invariants.
 use crate::shared::error::{AppError, AppResult};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssessmentType {
     PreTest,
     Quiz,
@@ -22,7 +20,7 @@ impl AssessmentType {
         if self == Self::Quiz { "quiz" } else { "paired" }
     }
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct Attempt {
     pub id: Uuid,
     pub assessment_type: AssessmentType,
@@ -32,26 +30,25 @@ pub struct Attempt {
     pub submitted_at: Option<DateTime<Utc>>,
     pub score: Option<i32>,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct Answer {
     pub snapshot_question_id: Uuid,
     pub option_ids: Vec<Uuid>,
     pub revision: i64,
     pub saved_at: DateTime<Utc>,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct SafeOption {
     pub id: Uuid,
     pub text: String,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct SafeQuestion {
     pub id: Uuid,
     pub question_id: Uuid,
     pub question_version_id: Uuid,
     pub position: i32,
     pub text: String,
-    #[serde(rename = "type")]
     pub question_type: String,
     pub required: bool,
     pub options: Vec<SafeOption>,
@@ -108,9 +105,8 @@ pub fn validate_score_budget(weights: impl IntoIterator<Item = i64>) -> AppResul
     }
     Ok(total)
 }
-#[derive(Serialize)]
+#[derive(Clone)]
 pub struct AttemptView {
-    #[serde(flatten)]
     pub attempt: Attempt,
     pub questions: Vec<SafeQuestion>,
     pub answers: Vec<Answer>,

@@ -7,17 +7,15 @@ use crate::{
             domain::{FormDate, StudentName},
         },
         learning::{
-            application::{Operation, StudentService},
+            application::{
+                Operation, OperationResult, StudentProfile, StudentService, fingerprint_fields,
+            },
             domain::StudentScope,
         },
     },
     shared::error::{AppError, AppResult},
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use uuid::Uuid;
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Registration {
     pub name: String,
     pub school_id: Uuid,
@@ -36,28 +34,29 @@ impl StudentService {
         &self,
         input: Registration,
         mut context: RegistrationContext,
-    ) -> AppResult<(Value, IssuedSession)> {
+    ) -> AppResult<(StudentProfile, IssuedSession)> {
         let name = StudentName::parse(&input.name)?;
         let date = FormDate::parse(&input.form_date)?;
         // Fingerprint semantic, validated input rather than whitespace/Unicode spelling.
         context.operation = Operation::new(
             context.operation.scope,
             context.operation.key,
-            &Registration {
-                name: name.as_str().to_owned(),
-                school_id: input.school_id,
-                form_date: date.value().to_string(),
-            },
+            &fingerprint_fields(&[
+                name.as_str().as_bytes(),
+                input.school_id.as_bytes(),
+                date.value().to_string().as_bytes(),
+            ]),
             context.operation.request_id,
         )?;
         let mut tx = self.uow.begin().await?;
         let replay = context.operation.replay(&mut *tx, "enrollment").await?;
-        let (scope, body) = if let Some((_, body)) = replay {
+        let (scope, body) = if let Some(replay) = replay {
+            let OperationResult::Enrollment(body) = replay else {
+                return Err(AppError::Internal);
+            };
             let scope = StudentScope {
-                student_id: serde_json::from_value(body["student"]["id"].clone())
-                    .map_err(|_| AppError::Internal)?,
-                enrollment_id: serde_json::from_value(body["enrollment"]["id"].clone())
-                    .map_err(|_| AppError::Internal)?,
+                student_id: body.student.id,
+                enrollment_id: body.enrollment.id,
             };
             (scope, body)
         } else {
@@ -84,10 +83,17 @@ impl StudentService {
             tx.create_attempt(scope.enrollment_id, AssessmentType::PreTest)
                 .await?;
             let j = tx.journey(scope).await?;
-            let body = json!({"student":j.student,"enrollment":j.enrollment});
+            let body = StudentProfile {
+                student: j.student,
+                enrollment: j.enrollment,
+            };
             context
                 .operation
-                .remember(&mut *tx, "enrollment", 201, body.clone())
+                .remember(
+                    &mut *tx,
+                    "enrollment",
+                    OperationResult::Enrollment(body.clone()),
+                )
                 .await?;
             tx.audit(
                 "student.enroll",

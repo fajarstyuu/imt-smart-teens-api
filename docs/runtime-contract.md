@@ -90,6 +90,16 @@ Inputs must be JSON **numbers**, finite, positive, exactly representable as NUME
 
 `bmi_v1 = weight_kg / (height_cm / 100)^2`, rounded half-up only at NUMERIC(38,12) storage precision; a result rounded to zero is rejected. Input scale4 and bounds fit checked i128 intermediate arithmetic exactly. `bmi_display` is a half-up one-decimal **string**, e.g. `"20.9"`, not a health category. Inputs and `bmi` serialize as JSON numbers. Clinical categories, healthy ranges and diagnoses are not returned.
 
+## Internal typed results and operation-cache compatibility
+
+Application/domain workflows expose typed progress, profile, lesson, attempt, submission and measurement results; HTTP DTO adapters alone select JSON field names, public enums and numeric tokens. Domain decimals accept/return checked exact lexical/scaled values, not JSON numbers. Stale-answer conflict facts are typed and mapped to the existing error.details.latest_answer wire shape by the HTTP error adapter. These internal changes preserve the public endpoint contracts above.
+
+Operation persistence now uses a versioned infrastructure-only CacheV1 JSONB representation of safe semantic results, distinct from HTTP response bodies. It stores no raw cookies, session/CSRF tokens or answer keys. The existing relational status column is checked against the semantic result at replay. Unsupported/malformed versions and earlier unversioned records fail closed; they do not authorize repeating business writes. No transparent legacy-cache backfill is supplied by this predeployment change. A rollout over an older live version with existing operation records requires an explicit compatibility transition; final runtime integration remains a separate gate.
+
+Both pinned assessment banks are checked against the aggregate NUMERIC(12,4) budget before enrollment commits. Exact maximum total99999999.9999 points is accepted; any larger total, nonpositive weight or invalid/empty total returns409 CONTENT_NOT_AVAILABLE without identity/session/cache/audit effects. Submission defensively validates its pinned budget before score writes. This is an aggregate budget, not a change to exact-set weighting or score visibility. Publication must reuse `assessment::domain::validate_score_budget(weights: impl IntoIterator<Item=i64>) -> AppResult<i64>` with weights in exact scale4 units and MAX_BANK_SCORE_UNITS999999999999, before referencing a new bank from a path.
+
+Lesson completion timestamps are evaluated at write time after locking and never before the recorded opening; repeat completion preserves the original timestamp even if the transaction began before another opening transaction committed.
+
 ## Task3 publication/fixture integration
 
 No implicit production seed/import exists. The explicit synthetic fixture is `tests/fixtures/student.rs::content`: two published lessons with one required section each; paired/quiz banks each containing one single and one multiple required question, three options each, exact_set_v1 and max_points1; bank versions plus ordered path version. Later frontend fixtures should drive this actual schema/API, not Node payload aliases.

@@ -6,11 +6,10 @@ use crate::{
         learning::{application::ports::MeasurementRepository, domain::StudentScope},
     },
     platform::database::failure,
-    shared::error::{AppError, AppResult},
+    shared::error::AppResult,
 };
 use async_trait::async_trait;
 use sqlx::{Row, postgres::PgRow};
-use std::str::FromStr;
 use uuid::Uuid;
 fn measurement(r: PgRow) -> AppResult<Measurement> {
     let weight = PositiveInput::parse_text(&r.try_get::<String, _>("weight").map_err(failure)?)?;
@@ -19,10 +18,9 @@ fn measurement(r: PgRow) -> AppResult<Measurement> {
     let display = Bmi::calculate(weight, height)?.display();
     Ok(Measurement {
         id: r.try_get("id").map_err(failure)?,
-        weight_kg: weight.number()?,
-        height_cm: height.number()?,
-        bmi: serde_json::Number::from_str(&r.try_get::<String, _>("result").map_err(failure)?)
-            .map_err(|_| AppError::Internal)?,
+        weight_kg: weight,
+        height_cm: height,
+        bmi: Bmi::parse_text(&r.try_get::<String, _>("result").map_err(failure)?)?,
         bmi_display: display,
         calculation_rule_version: r.try_get("calculation_rule_version").map_err(failure)?,
         created_at: r.try_get("created_at").map_err(failure)?,

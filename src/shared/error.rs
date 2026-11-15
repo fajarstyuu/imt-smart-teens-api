@@ -16,7 +16,7 @@ pub enum AppError {
     #[error("{code}")]
     ConflictDetails {
         code: &'static str,
-        details: serde_json::Value,
+        details: ConflictDetails,
     },
     #[error("dependency unavailable")]
     Unavailable,
@@ -24,3 +24,14 @@ pub enum AppError {
     Internal,
 }
 pub type AppResult<T> = Result<T, AppError>;
+
+/// Neutral conflict facts; transport chooses field names and envelope formatting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictDetails {
+    AnswerRevision {
+        snapshot_question_id: uuid::Uuid,
+        option_ids: Vec<uuid::Uuid>,
+        revision: i64,
+        saved_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+}

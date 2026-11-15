@@ -39,7 +39,16 @@ impl From<AppError> for ApiError {
                 return Self {
                     status: StatusCode::CONFLICT,
                     code,
-                    details: Some(details),
+                    details: Some(match details {
+                        crate::shared::error::ConflictDetails::AnswerRevision {
+                            snapshot_question_id,
+                            option_ids,
+                            revision,
+                            saved_at,
+                        } => {
+                            json!({"latest_answer": {"snapshot_question_id":snapshot_question_id,"option_ids":option_ids,"revision":revision,"saved_at":saved_at}})
+                        }
+                    }),
                     message: "Data telah berubah. Muat ulang sebelum menyimpan.",
                 };
             }

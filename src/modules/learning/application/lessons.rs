@@ -1,19 +1,21 @@
 //! Read/visit/complete pinned lessons under an enrollment lock, preserving event timestamps.
 use super::*;
 use crate::modules::{assessment::domain::AssessmentType, learning::domain::*};
-use serde_json::{Value, json};
 use uuid::Uuid;
 impl StudentService {
     /// Restore identity and the enrollment-time school snapshot from the authenticated scope.
-    pub async fn me(&self, scope: StudentScope) -> AppResult<Value> {
+    pub async fn me(&self, scope: StudentScope) -> AppResult<StudentProfile> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
-        let out = json!({"student":j.student,"enrollment":j.enrollment});
+        let out = StudentProfile {
+            student: j.student,
+            enrollment: j.enrollment,
+        };
         tx.commit().await?;
         Ok(out)
     }
     /// Derive stage locks from committed attempt, lesson and measurement records, not mutable flags.
-    pub async fn progress(&self, scope: StudentScope) -> AppResult<Value> {
+    pub async fn progress(&self, scope: StudentScope) -> AppResult<Progress> {
         let mut tx = self.uow.begin().await?;
         let out = tx.journey(scope).await?.progress();
         tx.commit().await?;
@@ -34,7 +36,7 @@ impl StudentService {
         scope: StudentScope,
         id: Uuid,
         section: Option<Uuid>,
-    ) -> AppResult<Value> {
+    ) -> AppResult<OpenedLesson> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
         let l = j.lesson(id)?;
@@ -47,12 +49,20 @@ impl StudentService {
         tx.open_lesson(scope, l.lesson_version_id, section).await?;
         let j = tx.journey(scope).await?;
         let v = tx.lesson_view(scope, j.lesson(id)?).await?;
-        let out = json!({"lesson_id":id,"opened_at":v.lesson.opened_at,"visited_section_ids":v.visited_section_ids});
+        let out = OpenedLesson {
+            lesson_id: id,
+            opened_at: v.lesson.opened_at,
+            visited_section_ids: v.visited_section_ids,
+        };
         tx.commit().await?;
         Ok(out)
     }
     /// Complete only after required pinned sections were visited; repeats keep the first timestamp.
-    pub async fn complete_lesson(&self, scope: StudentScope, id: Uuid) -> AppResult<Value> {
+    pub async fn complete_lesson(
+        &self,
+        scope: StudentScope,
+        id: Uuid,
+    ) -> AppResult<CompletedLesson> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
         let l = j.lesson(id)?;
@@ -66,12 +76,16 @@ impl StudentService {
         }
         tx.complete_lesson(scope, l.lesson_version_id).await?;
         let j = tx.journey(scope).await?;
-        let out = json!({"lesson_id":id,"completed_at":j.lesson(id)?.completed_at,"progress":j.progress()});
+        let out = CompletedLesson {
+            lesson_id: id,
+            completed_at: j.lesson(id)?.completed_at,
+            progress: j.progress(),
+        };
         tx.commit().await?;
         Ok(out)
     }
     /// Reveal own paired results only after the post-test committed.
-    pub async fn summary(&self, scope: StudentScope) -> AppResult<Value> {
+    pub async fn summary(&self, scope: StudentScope) -> AppResult<Summary> {
         let mut tx = self.uow.begin().await?;
         let j = tx.journey(scope).await?;
         if !j.submitted(AssessmentType::PostTest) {
@@ -80,14 +94,18 @@ impl StudentService {
         let scores = j
             .attempts
             .iter()
-            .map(|a| {
-                (
-                    a.assessment_type.as_str().to_owned(),
-                    json!(j.visible_score(a)),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
-        let out = json!({"student":j.student,"enrollment":j.enrollment,"scores":scores,"latest_measurement":j.latest_measurement,"progress":j.progress()});
+            .map(|a| (a.assessment_type, j.visible_score(a)))
+            .collect();
+        let progress = j.progress();
+        let out = Summary {
+            profile: StudentProfile {
+                student: j.student,
+                enrollment: j.enrollment,
+            },
+            scores,
+            latest_measurement: j.latest_measurement,
+            progress,
+        };
         tx.commit().await?;
         Ok(out)
     }

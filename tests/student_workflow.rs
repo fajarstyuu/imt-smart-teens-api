@@ -644,7 +644,7 @@ fn bmi_exact_boundaries_precision_and_rounding() {
     let w = PositiveInput::parse_text("60.5").unwrap();
     let h = PositiveInput::parse_text("170").unwrap();
     let bmi = Bmi::calculate(w, h).unwrap();
-    assert_eq!(bmi.sql(), "20.934256055363");
+    assert_eq!(bmi.decimal_text(), "20.934256055363");
     assert_eq!(bmi.display(), "20.9");
     let bmi = Bmi::calculate(
         PositiveInput::parse_text("20.95").unwrap(),
@@ -658,7 +658,7 @@ fn bmi_exact_boundaries_precision_and_rounding() {
             PositiveInput::parse_text("0.0001").unwrap()
         )
         .unwrap()
-        .sql(),
+        .decimal_text(),
         "99999999999900000000.000000000000"
     );
 }

@@ -56,10 +56,10 @@ pub async fn student_register(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_owned(),
-        &input,
+        &[],
         REQUEST_ID.with(Clone::clone),
     )?;
-    let (mut out, issued) = state
+    let (out, issued) = state
         .students
         .register(
             input,
@@ -72,8 +72,8 @@ pub async fn student_register(
             },
         )
         .await?;
-    out["csrf_token"] = json!(next);
-    let mut response = (StatusCode::CREATED, Json(json!({"data":out}))).into_response();
+    let profile = crate::modules::learning::presentation::dto::ProfileDto::from(out);
+    let mut response = (StatusCode::CREATED, Json(json!({"data":{"student":profile.student,"enrollment":profile.enrollment,"csrf_token":next}}))).into_response();
     response.headers_mut().append(
         header::SET_COOKIE,
         cookie_value(

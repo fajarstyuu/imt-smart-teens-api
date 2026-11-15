@@ -1,5 +1,6 @@
 //! PostgreSQL adapters implement core repository ports; a transaction is never independently committed.
 mod assessment;
+mod cache;
 mod enrollment;
 mod measurements;
 mod operations;

@@ -35,8 +35,10 @@ impl OperationRepository for PgStudentTransaction {
         row.map(|r| {
             Ok(CachedOperation {
                 payload_hash: r.try_get("payload_hash").map_err(failure)?,
-                status: r.try_get::<i32, _>("status_code").map_err(failure)? as u16,
-                body: r.try_get("response_body").map_err(failure)?,
+                result: super::cache::decode(
+                    r.try_get("status_code").map_err(failure)?,
+                    r.try_get("response_body").map_err(failure)?,
+                )?,
             })
         })
         .transpose()
@@ -48,7 +50,8 @@ impl OperationRepository for PgStudentTransaction {
         key: &str,
         v: CachedOperation,
     ) -> AppResult<()> {
-        sqlx::query("INSERT INTO platform_idempotency(scope_hash,operation,key,payload_hash,status_code,response_body,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '24 hours')").bind(scope).bind(operation).bind(key).bind(v.payload_hash).bind(i32::from(v.status)).bind(v.body).execute(&mut *self.tx).await.map_err(failure)?;
+        let (status, body) = super::cache::encode(v.result)?;
+        sqlx::query("INSERT INTO platform_idempotency(scope_hash,operation,key,payload_hash,status_code,response_body,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '24 hours')").bind(scope).bind(operation).bind(key).bind(v.payload_hash).bind(status).bind(body).execute(&mut *self.tx).await.map_err(failure)?;
         Ok(())
     }
     async fn audit(&mut self, action: &str, resource: Uuid, request_id: &str) -> AppResult<()> {

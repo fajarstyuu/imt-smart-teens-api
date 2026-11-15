@@ -1,10 +1,14 @@
 //! Thin v1 student routes. Extractors authenticate; application facades own all policy.
+pub(crate) mod dto;
 use super::super::identity::presentation::{student_logout, student_register};
 use crate::{
     modules::{
         assessment::domain::AssessmentType,
         identity::application::Authenticated,
-        learning::{application::Operation, domain::StudentScope},
+        learning::{
+            application::{Creation, Operation},
+            domain::StudentScope,
+        },
     },
     transport::http::{
         AppState,
@@ -21,6 +25,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
+use dto::*;
 use serde::Deserialize;
 use serde_json::{Number, Value, json};
 use uuid::Uuid;
@@ -72,7 +77,7 @@ fn operation(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .into(),
-        payload,
+        &serde_json::to_vec(payload).map_err(|_| crate::shared::error::AppError::Internal)?,
         REQUEST_ID.with(Clone::clone),
     )?)
 }
@@ -80,13 +85,17 @@ async fn me(
     State(s): State<AppState>,
     StudentSession(a): StudentSession,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(json!({"data":s.students.me(scope(&a)?).await?})))
+    Ok(Json(
+        json!({"data":ProfileDto::from(s.students.me(scope(&a)?).await?)}),
+    ))
 }
 async fn progress(
     State(s): State<AppState>,
     StudentSession(a): StudentSession,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(json!({"data":s.students.progress(scope(&a)?).await?})))
+    Ok(Json(
+        json!({"data":ProgressDto::from(s.students.progress(scope(&a)?).await?)}),
+    ))
 }
 async fn lesson(
     State(s): State<AppState>,
@@ -94,7 +103,7 @@ async fn lesson(
     ApiPath(id): ApiPath<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"data":s.students.lesson(scope(&a)?,id).await?}),
+        json!({"data":LessonViewDto::from(s.students.lesson(scope(&a)?,id).await?)}),
     ))
 }
 #[derive(Deserialize)]
@@ -112,7 +121,7 @@ async fn opened(
     ApiJson(input): ApiJson<Opened>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"data":s.students.open_lesson(scope(&a)?,id,input.section_id).await?}),
+        json!({"data":OpenedDto::from(s.students.open_lesson(scope(&a)?,id,input.section_id).await?)}),
     ))
 }
 async fn completion(
@@ -122,13 +131,29 @@ async fn completion(
     ApiJson(_): ApiJson<Empty>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"data":s.students.complete_lesson(scope(&a)?,id).await?}),
+        json!({"data":CompletedDto::from(s.students.complete_lesson(scope(&a)?,id).await?)}),
     ))
+}
+#[derive(Deserialize, serde::Serialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum AssessmentTypeRequest {
+    PreTest,
+    Quiz,
+    PostTest,
+}
+impl From<AssessmentTypeRequest> for AssessmentType {
+    fn from(t: AssessmentTypeRequest) -> Self {
+        match t {
+            AssessmentTypeRequest::PreTest => Self::PreTest,
+            AssessmentTypeRequest::Quiz => Self::Quiz,
+            AssessmentTypeRequest::PostTest => Self::PostTest,
+        }
+    }
 }
 #[derive(Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct CreateAttempt {
-    assessment_type: AssessmentType,
+    assessment_type: AssessmentTypeRequest,
 }
 async fn create_attempt(
     State(s): State<AppState>,
@@ -136,17 +161,21 @@ async fn create_attempt(
     headers: HeaderMap,
     ApiJson(input): ApiJson<CreateAttempt>,
 ) -> Result<Response, ApiError> {
-    let (status, out) = s
+    let out = s
         .students
         .create_attempt(
             scope(&a)?,
-            input.assessment_type,
+            input.assessment_type.into(),
             operation(&a, &headers, &input)?,
         )
         .await?;
     Ok((
-        StatusCode::from_u16(status).map_err(|_| crate::shared::error::AppError::Internal)?,
-        Json(json!({"data":out})),
+        if out.outcome == Creation::Created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+        Json(json!({"data":AttemptCreationDto::from(out)})),
     )
         .into_response())
 }
@@ -156,7 +185,7 @@ async fn attempt(
     ApiPath(id): ApiPath<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"data":s.students.attempt(scope(&a)?,id).await?}),
+        json!({"data":AttemptViewDto::from(s.students.attempt(scope(&a)?,id).await?)}),
     ))
 }
 #[derive(Deserialize)]
@@ -172,7 +201,7 @@ async fn save_answer(
     ApiJson(input): ApiJson<SaveAnswer>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"data":s.students.save_answer(scope(&a)?,id,q,input.option_ids,input.expected_revision).await?}),
+        json!({"data":AnswerDto::from(s.students.save_answer(scope(&a)?,id,q,input.option_ids,input.expected_revision).await?)}),
     ))
 }
 async fn submit(
@@ -183,7 +212,7 @@ async fn submit(
     ApiJson(_): ApiJson<Empty>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"data":s.students.submit(scope(&a)?,id,operation(&a,&headers,&json!({}))?).await?}),
+        json!({"data":SubmissionDto::from(s.students.submit(scope(&a)?,id,operation(&a,&headers,&json!({}))?).await?)}),
     ))
 }
 #[derive(Deserialize, serde::Serialize)]
@@ -201,9 +230,22 @@ async fn measure(
     let op = operation(&a, &headers, &input)?;
     let out = s
         .students
-        .measure(scope(&a)?, input.weight_kg, input.height_cm, op)
+        .measure(
+            scope(&a)?,
+            crate::modules::anthropometry::domain::PositiveInput::parse_text(
+                &input.weight_kg.to_string(),
+            )?,
+            crate::modules::anthropometry::domain::PositiveInput::parse_text(
+                &input.height_cm.to_string(),
+            )?,
+            op,
+        )
         .await?;
-    Ok((StatusCode::CREATED, Json(json!({"data":out}))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"data":MeasurementCreationDto::try_from(out)?})),
+    )
+        .into_response())
 }
 async fn measurements(
     State(s): State<AppState>,
@@ -211,7 +253,13 @@ async fn measurements(
     ApiQuery(p): ApiQuery<Pagination>,
 ) -> Result<Json<Value>, ApiError> {
     let (limit, offset) = p.validate()?;
-    let (rows, total) = s.students.measurements(scope(&a)?, limit, offset).await?;
+    let history = s.students.measurements(scope(&a)?, limit, offset).await?;
+    let rows = history
+        .measurements
+        .into_iter()
+        .map(MeasurementDto::try_from)
+        .collect::<crate::shared::error::AppResult<Vec<_>>>()?;
+    let total = history.total;
     Ok(Json(
         json!({"data":rows,"meta":{"limit":limit,"offset":offset,"total":total}}),
     ))
@@ -220,5 +268,7 @@ async fn summary(
     State(s): State<AppState>,
     StudentSession(a): StudentSession,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(json!({"data":s.students.summary(scope(&a)?).await?})))
+    Ok(Json(
+        json!({"data":SummaryDto::try_from(s.students.summary(scope(&a)?).await?)?}),
+    ))
 }
