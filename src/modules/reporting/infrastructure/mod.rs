@@ -30,7 +30,7 @@ impl ReportReader for PgReports {
         a: Uuid,
         f: Filters,
         w: Window,
-    ) -> AppResult<crate::modules::learning::admin::application::Page<StudentSummary>> {
+    ) -> AppResult<crate::shared::editing::Page<StudentSummary>> {
         students::list(&self.pool, a, f, w).await
     }
     async fn results(&self, a: Uuid, s: Uuid, e: Option<Uuid>) -> AppResult<StudentResults> {
@@ -41,7 +41,7 @@ impl ReportReader for PgReports {
         a: Uuid,
         id: Uuid,
         w: Window,
-    ) -> AppResult<crate::modules::learning::admin::application::Page<QuestionAnswer>> {
+    ) -> AppResult<crate::shared::editing::Page<QuestionAnswer>> {
         answers::attempt(&self.pool, a, id, w).await
     }
     async fn question_answers(
@@ -50,7 +50,7 @@ impl ReportReader for PgReports {
         s: QuestionSelection,
         f: Filters,
         w: Window,
-    ) -> AppResult<crate::modules::learning::admin::application::Page<QuestionAnswer>> {
+    ) -> AppResult<crate::shared::editing::Page<QuestionAnswer>> {
         answers::question(&self.pool, a, s, f, w).await
     }
 }

@@ -1,12 +1,13 @@
 //! Typed admin commands and question publication validation. No student DTO reuse.
 use crate::{
     modules::{
+        identity::application::authorize_content as authorize,
         identity::{application::AuditActor, domain::Principal},
-        learning::admin::application::{
-            ContentQuery, ContentState, Page, Version, authorize, revision, text,
-        },
     },
-    shared::error::{AppError, AppResult},
+    shared::{
+        editing::{ContentQuery, ContentState, Page, Version, revision, text},
+        error::{AppError, AppResult},
+    },
 };
 use async_trait::async_trait;
 use std::{collections::HashSet, sync::Arc};

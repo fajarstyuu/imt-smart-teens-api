@@ -1,5 +1,6 @@
 //! Admin-only allowlisted editor DTOs. No persistence or SQL is reachable from handlers.
 use super::application::*;
+use crate::transport::http::editor::{ListQuery, Revision, version_dto};
 use crate::{
     modules::identity::application::Authenticated,
     shared::error::AppError,
@@ -30,22 +31,6 @@ pub fn routes() -> Router<AppState> {
             post(publish_path),
         )
         .route("/api/v1/admin/learning-path/order", put(order))
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ListQuery {
-    pub status: Option<String>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-}
-impl ListQuery {
-    pub fn core(self) -> Result<ContentQuery, ApiError> {
-        Ok(ContentQuery {
-            status: self.status.map(|s| ContentState::parse(&s)).transpose()?,
-            limit: self.limit.unwrap_or(25),
-            offset: self.offset.unwrap_or(0),
-        })
-    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,17 +69,9 @@ impl LessonInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Revision {
-    pub expected_revision: i64,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Order {
     lesson_ids: Vec<Uuid>,
     expected_revision: i64,
-}
-pub fn version_dto(v: Version) -> Value {
-    json!({"id":v.id,"version":v.version,"published_at":v.published_at})
 }
 pub fn editor_dto(l: LessonEditor) -> Value {
     json!({"id":l.id,"state":l.state.as_str(),"revision":l.revision,"position":l.position,"draft":{"title":l.draft.title,"description":l.draft.description,"sections":l.draft.sections.into_iter().map(|s|json!({"id":s.id,"title":s.title,"body":s.body,"required":s.required})).collect::<Vec<_>>()},"versions":l.versions.into_iter().map(version_dto).collect::<Vec<_>>()})

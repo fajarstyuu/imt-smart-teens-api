@@ -1,12 +1,10 @@
 //! Student/enrollment summaries, filters and detail selection share the same scoped relation.
 use super::{super::application::*, read};
+use crate::shared::editing::Page;
 use crate::{
     modules::{
         anthropometry::domain::{Bmi, Measurement, PositiveInput},
-        learning::{
-            admin::application::Page,
-            domain::{Enrollment, Lesson, Student},
-        },
+        learning::domain::{Enrollment, Lesson, Student},
     },
     platform::database::failure,
     shared::error::{AppError, AppResult},

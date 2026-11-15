@@ -2,15 +2,12 @@
 use super::application::*;
 use crate::{
     modules::{
-        identity::application::Authenticated,
-        learning::admin::{
-            application::actor,
-            presentation::{ListQuery, Revision, version_dto},
-        },
+        identity::application::Authenticated, identity::application::content_actor as actor,
     },
     shared::error::AppError,
     transport::http::{
         AppState,
+        editor::{ListQuery, Revision, version_dto},
         error::{ApiError, REQUEST_ID},
         extractors::{AdminSession, ApiJson, ApiPath, ApiQuery},
     },

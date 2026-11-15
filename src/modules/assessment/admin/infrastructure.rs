@@ -1,15 +1,12 @@
 //! Bank-root then question locks serialize publication with every edit; histories are append-only.
 use super::application::*;
 use crate::{
-    modules::{
-        assessment::domain::validate_score_budget,
-        identity::application::AuditActor,
-        learning::admin::{
-            application::{ContentQuery, ContentState, Page, check_revision},
-            infrastructure::{audit, versions},
-        },
+    modules::{assessment::domain::validate_score_budget, identity::application::AuditActor},
+    platform::{
+        database::failure,
+        editor::{audit, versions},
     },
-    platform::database::failure,
+    shared::editing::{ContentQuery, ContentState, Page, check_revision},
     shared::error::{AppError, AppResult},
 };
 use async_trait::async_trait;
@@ -109,7 +106,7 @@ async fn question(
     .await
     .map_err(failure)?
     .ok_or(AppError::NotFound)?;
-    Ok(QuestionEditor{id,bank_id:bank,state:ContentState::parse(r.try_get("state").map_err(failure)?)?,revision:r.try_get("revision").map_err(failure)?,position:r.try_get("position").map_err(failure)?,draft:decode(r.try_get("draft_payload").map_err(failure)?)?,versions:versions(c,"SELECT v.id,v.version,b.published_at FROM assessment_question_versions v JOIN assessment_bank_items i ON i.question_version_id=v.id JOIN assessment_bank_versions b ON b.id=i.bank_version_id WHERE v.question_id=$1 ORDER BY v.version DESC",id).await?})
+    Ok(QuestionEditor{id,bank_id:bank,state:ContentState::parse(r.try_get("state").map_err(failure)?)?,revision:r.try_get("revision").map_err(failure)?,position:r.try_get("position").map_err(failure)?,draft:decode(r.try_get("draft_payload").map_err(failure)?)?,versions:versions(c,"SELECT v.id,v.version,min(b.published_at) AS published_at FROM assessment_question_versions v JOIN assessment_bank_items i ON i.question_version_id=v.id JOIN assessment_bank_versions b ON b.id=i.bank_version_id WHERE v.question_id=$1 GROUP BY v.id,v.version ORDER BY v.version DESC",id).await?})
 }
 async fn dirty(c: &mut PgConnection, bank: Uuid) -> AppResult<()> {
     sqlx::query("UPDATE assessment_banks SET revision=revision+1,state='draft' WHERE id=$1")
@@ -200,10 +197,36 @@ impl BankStore for PgBankCms {
         bank(&mut tx, id, false).await?;
         let status = q.status.map(ContentState::as_str);
         let total=sqlx::query_scalar("SELECT count(*) FROM assessment_questions WHERE bank_id=$1 AND ($2::text IS NULL OR state=$2)").bind(id).bind(status).fetch_one(&mut *tx).await.map_err(failure)?;
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM assessment_questions WHERE bank_id=$1 AND ($2::text IS NULL OR state=$2) ORDER BY position,id LIMIT $3 OFFSET $4").bind(id).bind(status).bind(q.limit).bind(q.offset).fetch_all(&mut *tx).await.map_err(failure)?;
+        let records=sqlx::query("SELECT * FROM assessment_questions WHERE bank_id=$1 AND ($2::text IS NULL OR state=$2) ORDER BY position,id LIMIT $3 OFFSET $4").bind(id).bind(status).bind(q.limit).bind(q.offset).fetch_all(&mut *tx).await.map_err(failure)?;
+        let ids = records
+            .iter()
+            .map(|r| r.try_get::<Uuid, _>("id").map_err(failure))
+            .collect::<AppResult<Vec<_>>>()?;
+        let history=sqlx::query("SELECT v.question_id,v.id,v.version,min(b.published_at) AS published_at FROM assessment_question_versions v JOIN assessment_bank_items i ON i.question_version_id=v.id JOIN assessment_bank_versions b ON b.id=i.bank_version_id WHERE v.question_id=ANY($1) GROUP BY v.question_id,v.id,v.version ORDER BY v.question_id,v.version DESC").bind(&ids).fetch_all(&mut *tx).await.map_err(failure)?;
+        let mut histories =
+            std::collections::HashMap::<Uuid, Vec<crate::shared::editing::Version>>::new();
+        for r in history {
+            histories
+                .entry(r.try_get("question_id").map_err(failure)?)
+                .or_default()
+                .push(crate::shared::editing::Version {
+                    id: r.try_get("id").map_err(failure)?,
+                    version: r.try_get("version").map_err(failure)?,
+                    published_at: r.try_get("published_at").map_err(failure)?,
+                });
+        }
         let mut rows = vec![];
-        for qid in ids {
-            rows.push(question(&mut tx, id, qid, false).await?);
+        for r in records {
+            let qid = r.try_get("id").map_err(failure)?;
+            rows.push(QuestionEditor {
+                id: qid,
+                bank_id: id,
+                state: ContentState::parse(r.try_get("state").map_err(failure)?)?,
+                revision: r.try_get("revision").map_err(failure)?,
+                position: r.try_get("position").map_err(failure)?,
+                draft: decode(r.try_get("draft_payload").map_err(failure)?)?,
+                versions: histories.remove(&qid).unwrap_or_default(),
+            });
         }
         tx.commit().await.map_err(failure)?;
         Ok(Page { rows, total })

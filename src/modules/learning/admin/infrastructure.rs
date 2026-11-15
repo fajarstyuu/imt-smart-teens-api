@@ -1,5 +1,6 @@
 //! PostgreSQL editor persistence. Every mutation and its redacted audit commit atomically.
 use super::application::*;
+use crate::platform::editor::{audit, versions};
 use crate::{
     modules::identity::application::AuditActor,
     platform::database::failure,
@@ -70,33 +71,6 @@ fn decode(v: serde_json::Value) -> AppResult<LessonDraft> {
             })
             .collect(),
     })
-}
-pub(crate) async fn audit(
-    c: &mut PgConnection,
-    a: &AuditActor,
-    action: &str,
-    kind: &str,
-    id: Uuid,
-    rev: i64,
-) -> AppResult<()> {
-    sqlx::query("INSERT INTO platform_audit_events(id,actor_session_id,actor_admin_id,action,resource_type,resource_id,resource_version,request_id,safe_metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'{}')").bind(Uuid::new_v4()).bind(a.session_id).bind(a.admin_id).bind(action).bind(kind).bind(id).bind(rev.to_string()).bind(&a.request_id).execute(c).await.map_err(failure)?;
-    Ok(())
-}
-pub(crate) async fn versions(c: &mut PgConnection, sql: &str, id: Uuid) -> AppResult<Vec<Version>> {
-    let rows = sqlx::query(sql)
-        .bind(id)
-        .fetch_all(c)
-        .await
-        .map_err(failure)?;
-    rows.into_iter()
-        .map(|r| {
-            Ok(Version {
-                id: r.try_get("id").map_err(failure)?,
-                version: r.try_get("version").map_err(failure)?,
-                published_at: r.try_get("published_at").map_err(failure)?,
-            })
-        })
-        .collect()
 }
 async fn lesson(c: &mut PgConnection, id: Uuid, lock: bool) -> AppResult<LessonEditor> {
     let sql = if lock {
@@ -199,10 +173,35 @@ impl LessonStore for PgLessonCms {
         .fetch_one(&mut *tx)
         .await
         .map_err(failure)?;
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT l.id FROM learning_lessons l LEFT JOIN learning_path_drafts p ON l.id=ANY(p.lesson_ids) WHERE ($1::text IS NULL OR l.state=$1) ORDER BY array_position(p.lesson_ids,l.id) NULLS LAST,l.id LIMIT $2 OFFSET $3").bind(status).bind(q.limit).bind(q.offset).fetch_all(&mut *tx).await.map_err(failure)?;
-        let mut rows = Vec::new();
-        for id in ids {
-            rows.push(lesson(&mut tx, id, false).await?);
+        let records=sqlx::query("SELECT l.*,array_position(p.lesson_ids,l.id) AS position FROM learning_lessons l LEFT JOIN learning_path_drafts p ON l.id=ANY(p.lesson_ids) WHERE ($1::text IS NULL OR l.state=$1) ORDER BY array_position(p.lesson_ids,l.id) NULLS LAST,l.id LIMIT $2 OFFSET $3").bind(status).bind(q.limit).bind(q.offset).fetch_all(&mut *tx).await.map_err(failure)?;
+        let ids = records
+            .iter()
+            .map(|r| r.try_get::<Uuid, _>("id").map_err(failure))
+            .collect::<AppResult<Vec<_>>>()?;
+        // One history query for the chosen page, rather than one root/history fetch per row.
+        let history=sqlx::query("SELECT lesson_id,id,version,published_at FROM learning_lesson_versions WHERE lesson_id=ANY($1) ORDER BY lesson_id,version DESC").bind(&ids).fetch_all(&mut *tx).await.map_err(failure)?;
+        let mut histories = std::collections::HashMap::<Uuid, Vec<Version>>::new();
+        for r in history {
+            histories
+                .entry(r.try_get("lesson_id").map_err(failure)?)
+                .or_default()
+                .push(Version {
+                    id: r.try_get("id").map_err(failure)?,
+                    version: r.try_get("version").map_err(failure)?,
+                    published_at: r.try_get("published_at").map_err(failure)?,
+                });
+        }
+        let mut rows = vec![];
+        for r in records {
+            let id = r.try_get("id").map_err(failure)?;
+            rows.push(LessonEditor {
+                id,
+                state: ContentState::parse(r.try_get("state").map_err(failure)?)?,
+                revision: r.try_get("revision").map_err(failure)?,
+                position: r.try_get("position").map_err(failure)?,
+                draft: decode(r.try_get("draft_payload").map_err(failure)?)?,
+                versions: histories.remove(&id).unwrap_or_default(),
+            });
         }
         tx.commit().await.map_err(failure)?;
         Ok(Page { rows, total })

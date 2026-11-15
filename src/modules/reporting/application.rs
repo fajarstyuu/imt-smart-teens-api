@@ -1,13 +1,11 @@
 //! Typed reporting ports, filter validation and state semantics independent of transport/SQL.
+use crate::shared::editing::Page;
 use crate::{
     modules::{
         anthropometry::domain::Measurement,
         assessment::domain::AssessmentType,
         identity::domain::Principal,
-        learning::{
-            admin::application::Page,
-            domain::{Enrollment, Lesson, Stage, Student},
-        },
+        learning::domain::{Enrollment, Lesson, Stage, Student},
     },
     shared::error::{AppError, AppResult},
 };

@@ -1,8 +1,8 @@
 //! Bounded snapshot-based answer pages, including pinned-but-not-started assessment rows.
 use super::{super::application::*, read};
 use crate::{
-    modules::learning::admin::application::Page,
     platform::database::failure,
+    shared::editing::Page,
     shared::error::{AppError, AppResult},
 };
 use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder, Row, postgres::PgRow};
