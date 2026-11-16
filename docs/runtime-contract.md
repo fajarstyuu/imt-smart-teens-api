@@ -1,5 +1,9 @@
 # Implemented Rust v1 runtime contract
 
+## Trusted reverse proxy boundary
+
+`TRUSTED_PROXY_IPS` is optional and defaults to no trusted peers. It accepts only comma-separated exact IPv4/IPv6 addresses, not wildcards/CIDRs. Only a listed TCP peer may supply one valid `X-Real-IP`; missing, malformed or duplicate values fall back to the socket peer. `Forwarded` and `X-Forwarded-For` never select rate-limit identity. The public edge must overwrite user-supplied IP headers, and the private frontend must forward that sanitized value. Never expose the backend directly or trust broad public ranges. Existing per-IP10login/300API requests per60seconds and health/preflight exclusions remain unchanged.
+
 This documents the Rust v1 runtime, not the legacy Node fixtures. IDs below are UUID strings, timestamps RFC3339 UTC, calendar dates `YYYY-MM-DD`. Success wraps the listed payload in `{data: ...}`. Errors are `{error:{code,message,details?},request_id}` with Indonesian messages. Mutations require allowlisted `Origin`, the cookie-bound `X-CSRF-Token`, and a valid role-session binding where authenticated. Responses have `Cache-Control: no-store` and `X-Request-ID`. There are no legacy fixture aliases or browser bearer tokens.
 
 ## Browser/session and retry protocol

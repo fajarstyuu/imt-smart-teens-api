@@ -91,6 +91,11 @@ fn check_policy(state: &AppState, request: &Request) -> Result<(), ApiError> {
         .get::<ConnectInfo<SocketAddr>>()
         .map(|i| i.0.ip())
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    let ip = super::client_ip::resolve(
+        ip,
+        request.headers(),
+        &state.settings.http.trusted_proxy_ips,
+    );
     let login = method == Method::POST && path == "/api/v1/admin/sessions";
     if !path.starts_with("/health/") && method != Method::OPTIONS && !state.limiter.allow(ip, login)
     {

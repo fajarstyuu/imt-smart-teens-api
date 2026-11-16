@@ -25,6 +25,7 @@ pub struct DatabaseSettings {
 #[derive(Clone)]
 pub struct HttpSettings {
     pub allowed_origins: Vec<String>,
+    pub trusted_proxy_ips: Vec<IpAddr>,
     pub request_timeout: Duration,
     pub body_limit: usize,
 }
@@ -106,6 +107,16 @@ impl Settings {
                 bail!("CORS_ALLOWED_ORIGINS must contain exact origins");
             }
         }
+        let proxy_ips = get("TRUSTED_PROXY_IPS").unwrap_or_default();
+        let trusted_proxy_ips = if proxy_ips.trim().is_empty() {
+            Vec::new()
+        } else {
+            proxy_ips
+                .split(',')
+                .map(|ip| ip.trim().parse::<IpAddr>())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| anyhow::anyhow!("TRUSTED_PROXY_IPS requires exact IP addresses"))?
+        };
         let csrf_key = get("CSRF_SIGNING_KEY")
             .filter(|s| s.len() >= 32)
             .ok_or_else(|| anyhow::anyhow!("CSRF_SIGNING_KEY must contain at least 32 bytes"))?
@@ -128,6 +139,7 @@ impl Settings {
             },
             http: HttpSettings {
                 allowed_origins,
+                trusted_proxy_ips,
                 request_timeout,
                 body_limit,
             },

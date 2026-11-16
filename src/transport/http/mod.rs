@@ -1,4 +1,5 @@
 //! HTTP composition, common extractors, middleware, and safe envelopes.
+mod client_ip;
 pub mod csrf;
 pub mod error;
 pub mod extractors;
