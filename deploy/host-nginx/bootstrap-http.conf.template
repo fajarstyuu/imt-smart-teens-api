@@ -1,0 +1,11 @@
+# Temporary HTTP-only ACME bootstrap. Never serve the application without TLS.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name imtsmartteens.my.id api.imtsmartteens.my.id;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/imt-smart-teens-acme;
+        try_files $uri =404;
+    }
+    location / { return 503; }
+}

@@ -1,0 +1,26 @@
+# Bound for valid TLS/ownership only; never a public backend ingress.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.imtsmartteens.my.id;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/imt-smart-teens-acme;
+        try_files $uri =404;
+    }
+    location / { return 301 https://api.imtsmartteens.my.id$request_uri; }
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name api.imtsmartteens.my.id;
+    ssl_certificate /etc/letsencrypt/live/imtsmartteens.my.id/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/imtsmartteens.my.id/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    server_tokens off;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/imt-smart-teens-acme;
+        try_files $uri =404;
+    }
+    location / { return 403; }
+}

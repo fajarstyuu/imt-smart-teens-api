@@ -1,0 +1,8 @@
+.git
+.worktrees
+.superpowers
+.env
+.env.*
+target
+__pycache__
+*.log

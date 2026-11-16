@@ -1,0 +1,109 @@
+# Production data is separate from every development/E2E Compose project.
+x-app-hardening: &app-hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ['/tmp:rw,noexec,nosuid,size=32m,mode=1777']
+  logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+services:
+  postgres:
+    image: postgres:17-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: imt_smart_teens
+      POSTGRES_USER: imt_owner
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+      TZ: UTC
+    command: [postgres, -c, shared_buffers=64MB, -c, max_connections=20, -c, log_statement=none, -c, log_min_error_statement=panic]
+    secrets: [postgres_password, app_password, migrator_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-imt-roles.sh:ro
+      - ./postgres/initialize-empty-content.sql:/opt/imt/initialize-empty-content.sql:ro
+    networks: [database]
+    mem_limit: 384m
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    stop_grace_period: 30s
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+  backend:
+    <<: *app-hardening
+    image: imt-smart-teens-backend:${IMAGE_TAG:-production}
+    build: {context: .., dockerfile: Dockerfile}
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "4180"
+      CORS_ALLOWED_ORIGINS: https://imtsmartteens.my.id
+      SESSION_COOKIE_SECURE: "true"
+      TRUSTED_PROXY_IPS: ${FRONTEND_PROXY_IP:-172.30.251.2}
+      DATABASE_URL_FILE: /run/secrets/app_database_url
+      CSRF_SIGNING_KEY_FILE: /run/secrets/csrf_signing_key
+      DATABASE_MAX_CONNECTIONS: "5"
+      DATABASE_ACQUIRE_TIMEOUT_SECS: "3"
+      DATABASE_STATEMENT_TIMEOUT_SECS: "10"
+      REQUEST_TIMEOUT_SECS: "15"
+      SHUTDOWN_TIMEOUT_SECS: "20"
+      RUST_LOG: info
+    secrets: [app_database_url, csrf_signing_key]
+    depends_on: {postgres: {condition: service_healthy}}
+    networks:
+      app: {ipv4_address: '${BACKEND_IP:-172.30.251.3}'}
+      database: {}
+    mem_limit: 384m
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "3", http://127.0.0.1:4180/health/ready]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+      start_period: 15s
+    stop_grace_period: 30s
+  frontend:
+    <<: *app-hardening
+    image: imt-smart-teens-frontend:${IMAGE_TAG:-production}
+    build: {context: '${FRONTEND_BUILD_CONTEXT:?Set FRONTEND_BUILD_CONTEXT to the frontend checkout}', dockerfile: Dockerfile}
+    restart: unless-stopped
+    ports: ['127.0.0.1:${FRONTEND_PORT:-5180}:8080']
+    depends_on: {backend: {condition: service_healthy}}
+    networks:
+      app: {ipv4_address: '${FRONTEND_PROXY_IP:-172.30.251.2}'}
+      edge: {}
+    mem_limit: 128m
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://127.0.0.1:8080/healthz]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+  migrator:
+    <<: *app-hardening
+    image: imt-smart-teens-backend:${IMAGE_TAG:-production}
+    profiles: [operations]
+    command: [migrate]
+    environment:
+      MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+      RUST_LOG: info
+    secrets: [migration_database_url]
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [database]
+    mem_limit: 256m
+networks:
+  edge: {}
+  app:
+    internal: true
+    ipam: {config: [{subnet: '${APP_SUBNET:-172.30.251.0/28}'}]}
+  database: {internal: true}
+volumes:
+  postgres_data: {}
+secrets:
+  postgres_password: {file: '${IMT_SECRET_DIR:?Set private IMT_SECRET_DIR}/postgres_password'}
+  app_password: {file: '${IMT_SECRET_DIR:?Set private IMT_SECRET_DIR}/app_password'}
+  migrator_password: {file: '${IMT_SECRET_DIR:?Set private IMT_SECRET_DIR}/migrator_password'}
+  app_database_url: {file: '${IMT_SECRET_DIR:?Set private IMT_SECRET_DIR}/app_database_url'}
+  migration_database_url: {file: '${IMT_SECRET_DIR:?Set private IMT_SECRET_DIR}/migration_database_url'}
+  csrf_signing_key: {file: '${IMT_SECRET_DIR:?Set private IMT_SECRET_DIR}/csrf_signing_key'}
