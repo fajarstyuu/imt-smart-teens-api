@@ -22,7 +22,15 @@ Official builder/runtime image manifests are pinned by digest in Dockerfiles/Com
 
 Copy `deploy/.env.production.example` to a private operator settings file, e.g. `/home/ubuntu/.config/imt-smart-teens/production/compose.env`, mode600. It contains paths, project name, image tag, subnet and port only, not passwords. Set `COMPOSE_PROJECT_NAME=imt-production`, `FRONTEND_BUILD_CONTEXT`, and `IMT_SECRET_DIR` deliberately. Check selected subnets against live routes and Docker networks. Defaults are app172.30.251.0/28/frontend172.30.251.2/backend172.30.251.3.
 
-`operations.sh prepare` invokes the explicit root/operator secret generator. A complete new set is published atomically; a complete existing set is validated/preserved and a partial/unknown set is rejected, never silently regenerated. Parent/secret directories are700. Secret files are400 and owned by the numeric service UID that reads them; metadata is600. This is required because local Compose file-backed secrets are bind mounts, not a reason to make passwords world-readable. Values never appear in CLI arguments, committed files, screenshots or logs.
+Secret preparation accepts only `<operator-home>/.config/imt-smart-teens/{production,smoke}/secrets`, using the OS account home and matching primary group, not an arbitrary root-supplied parent. It rejects relative/parent-traversal paths, symlink ancestry, unknown/partial sets, unsafe ownership/permissions and metadata before any mutation. Existing `.config`/namespace directories retain their ownership/modes; access by the trusted operator primary group is permitted there, but world-writable/foreign-writable ancestry is rejected and the actual production/smoke private parent must be700. This is not isolation from a malicious concurrent trusted host operator. Arbitrary relocation requires an explicitly reviewed deployment move, not a bypass flag.
+
+Run setup as the intended operator account; the script escalates only the actions needing root. Before first copying settings, create the dedicated private parent as that non-root account:
+
+```sh
+install -d -m700 "$HOME/.config/imt-smart-teens/production"
+```
+
+Do not chmod/chown shared system parents to repair a configuration error. An existing private-parent permission mismatch requires explicit operator review. `operations.sh prepare` invokes the explicit root/operator secret generator. A complete new set is published atomically; a complete existing set is validated/preserved without changing any existing directory or file; a partial/unknown set is rejected, never silently regenerated. Parent/secret directories are700. Secret files are400 and owned by the numeric service UID that reads them; metadata is600. This is required because local Compose file-backed secrets are bind mounts, not a reason to make passwords world-readable. Values never appear in CLI arguments, committed files, screenshots or logs.
 
 PostgreSQL gets only its owner/app/migrator password files; backend gets only its DML database URL and CSRF key; the operations-only migrator gets only its own connection secret. Private entrypoint file loading preserves signals with exec and rejects ambiguous environment/file sources. Connection/authentication values are [REDACTED]. Do not run Docker inspect with full environment output or print secret files.
 
@@ -72,7 +80,7 @@ Actual acceptance: both SANs issued successfully, expiry2027-02-14; renewal simu
 ## Verification
 
 - `cargo fmt`, warnings-denied all-target/all-feature Clippy, real PostgreSQL cargo suite and locked build:69Rust tests passed after the new exact-peer proxy policy.
-- `python3 -m unittest discover -s tests/infra -p 'test_*.py' -v`:11passed, covering Compose, secret mounts, role/init boundaries, exact tmpfs parsing, ingress/private networks, host policy and renewal hook. These static checks complement, not replace, container execution.
+- `python3 -m unittest discover -s tests/infra -p 'test_*.py' -v`:16passed after the one material correction, covering Compose, secret mounts, role/init boundaries, exact tmpfs parsing, ingress/private networks, host policy/renewal and privileged-preparation rejection/no-mutation/idempotence. These static checks complement, not replace, container execution.
 - Frontend `npm test`/`npm run build`:44Vitest +6 explicitly legacy-domain tests passed; two pre-existing Router bundling warnings remain. Legacy tests are not real persistence proof.
 - `tests/deployment/smoke.py --env-file /private/smoke/compose.env`: real isolated containers, migrations/init repeated, actual42501 CREATE/ALTER/migration-ledger denials, cookie/CORS/CSRF, independent IPv4/IPv6 rate buckets, and data/secret persistence across container recreation. It refuses production project/secrets. Use only its separately named smoke database/volume and port5182.
 - `tests/deployment/backup.py --backup-file /private/smoke/backups/file.dump`: private dump catalog and actual restore into a new owned smoke database, with synthetic data/five migrations retained; only its unique probe database is dropped afterward. Do not point it at production backups.

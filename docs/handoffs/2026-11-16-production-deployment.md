@@ -1,7 +1,7 @@
 # Production Compose/domain deployment — execution handoff
 
 Date: 2026-11-16, runtime UTC+08:00.
-Status: live deployment and operational checks passed; independent final review pending at this checkpoint. This is not yet a final source-acceptance verdict.
+Status: accepted by parent after one independent whole-change review and one tested material correction. Live Compose/domain/TLS delivery is complete; the deployment branches are not merged/pushed. Production account/school/content provisioning remains a separate owner operation.
 
 ## Scope, source and authorization
 
@@ -28,7 +28,7 @@ Production is a new volume imt-production_postgres_data, not the existing founda
 
 Settings: /home/ubuntu/.config/imt-smart-teens/production/compose.env (nonsecret paths/ports/project, mode600). Secret directory underneath,700/files400 with service UID ownership; secret/authentication/connection values [REDACTED]. Complete existing secret sets are preserved; invalid/partial sets are rejected, not rotated silently. Migrator and runtime roles are separate; runtime owns no application DDL permission or migration-ledger access. Root initialization is an explicit private SQL operation, not a production-mode bypass of the development-only CLI.
 
-Separate smoke project imt-production-smoke uses port5182/subnet172.30.252.0/28 and its own volume/secrets. Tests refuse production targets. A synthetic school-only persistence probe was created there; admin/student fixture counts remained0. All existing foundation/dev data and portfolio files remain preserved. Deployment worktrees are live read-only bind-mount sources and must not be deleted during Git cleanup.
+Separate smoke project imt-production-smoke uses port5182/subnet172.30.252.0/28 and its own volume/secrets. Its three containers were stopped after final verification to release resources; volume/backups/secrets were retained, not deleted. Tests refuse production targets. A synthetic school-only persistence probe was created there; admin/student fixture counts remained0. All existing foundation/dev data and portfolio files remain preserved. Deployment worktrees are live read-only bind-mount sources and must not be deleted during Git cleanup.
 
 ## Domain/TLS and rollback state
 
@@ -52,6 +52,14 @@ Separate smoke project imt-production-smoke uses port5182/subnet172.30.252.0/28 
 - Frontend `deploy/verify-public.mjs` passed real Chromium at1440desktop/390mobile, correct /admin/masuk navigation/empty validation, loaded images and no horizontal overflow; JavaScript page exceptions0 and productionPOST/PUT/DELETE0. Four expected anonymous /me401 console entries are recorded, not hidden. Four actual screenshots/report under ignored test-results/deployment-public; parent visually inspected desktop student/mobile admin. Desktop long-title within-word wrap is a baseline visual qualification, not a new functional deploy failure. No credentials were typed or captured.
 - Actual authenticated learning/editor/native200% zoom evidence belongs to the previous synthetic full-stack milestone; no claim that those authenticated flows were exercised against this intentionally empty production dataset.
 
+## Final review and bounded correction
+
+Independent reviewer sa-0-91b074b1/deleg_561f5351 reviewed both complete deployment ranges:0Critical/1Important/0newMinor, verdict With fixes. The parent accepted I1: a misconfigured root-run secret directory could chmod/chown its unrelated parent before rejecting it. No damage to the current production path was found or alleged. The original independent report is preserved under docs/reviews/2026-11-16-production-deployment.md; it is not relabeled as a second approval after correction.
+
+ONE native correction pass restricted secrets to the OS operator's dedicated home namespace, production/smoke stages only; rejects traversal/symlink ancestry/wrong ownership/unsafe permissions/partial sets/invalid metadata before any mutation; never repairs existing shared/private parents. Existing operator-primary-group access on intermediate namespace directories remains unchanged; actual private stage/secret directories stay700, secretfiles400. Malicious concurrent trusted host operators are not an isolation guarantee. Five regression/control tests use non-root owned temporary trees and intercepted mutators: unsafe system-path strings never reach real system writes. Initial4negative tests produced7subcase failures; a sandbox UID-control error in the expanded RED log is distinguished from those meaningful failures. Final5tests passed; full infrastructure16passed. Logs scratch/imt-secret-preparation-red.log and imt-secret-preparation-green.log preserve actual output.
+
+Parent also ran the fixed helper against the already valid production and smoke sets, comparing secret bytes and metadata/parent UID/GID/mode/mtime/ctime in memory: both unchanged, no values/hashes printed. No container rebuild or service restart was needed: this is an operator helper, not embedded Rust/served frontend. Fresh complete correction gates:69Rust/0failed/0ignored, fmt/Clippy/lockedbuild,16infra; frontend44Vitest+6legacy/build with the same two disclosed warnings. Full gate log scratch/imt-deploy-correction-gates.log. Parent closes I1 based on the reproduced regression, guard inspection and successful whole suites; no second review loop is claimed.
+
 ## Rulings I made
 
 1. Trust only exact configured socket peers and one valid X-Real-IP, default disabled — preserves real visitor budgets without trusting public header chains — cost if wrong: adjust the deployment proxy contract, never bypass CSRF/rate limits.
@@ -61,6 +69,16 @@ Separate smoke project imt-production-smoke uses port5182/subnet172.30.252.0/28 
 5. Keep proxy body budget1MiB above Rust64KiB — preserves structured Rust413 instead of an early proxy HTML error — cost if wrong: larger bodies reach the still-bounded Rust policy; actual65537byte test passed.
 6. Scope certificate renewal reload to the IMT lineage and validate first — webroot/certonly has no installer reload behavior — cost if wrong: stale served certificates; real dry-run/deploy-hook proof now passed.
 
-## Pending and limitations
+7. Restrict privileged secret preparation to the operator's dedicated home production/smoke namespace, with all validation before writes and no existing-parent repairs — closes I1 without global permission changes — cost if wrong: relocation/permissions require deliberate operator review; no arbitrary-path bypass or silent rotation.
+8. Keep real admin/school/content/grant setup as a separate owner operation — empty production data is intentional, not an invitation to copy fixtures — cost if wrong: enrollment waits for correct provisioning.
+9. Do not promote prior authenticated synthetic learning/editor evidence into authenticated production proof — production fixtures/authentication artifacts were prohibited — cost if wrong: authorized real-operator acceptance is still needed.
+10. Keep privacy/retention/child-data, accessibility/pixel-perfect, capacity and multi-replica limiter certification outside this deployment — those audits/designs were not performed — cost if wrong: assess/remediate before making those broader claims.
+11. Do not claim independent off-host/cloud-firewall/public-IPv6 coverage — probes originate on this VPS and no AAAA is advertised — cost if wrong: separately verify external routes/policies before changing DNS/network assumptions.
+12. Leave the seven existing application Minors in their prior explicit backlog — they are not deployment regressions or silently fixed — cost if wrong: a separately scoped correction is required, not an unannounced bonus rewrite.
+13. Do not auto-repair already lost secret sets or incompatible future schema releases — preserving data/secrets is the authorized boundary — cost if wrong: a separate recovery/release decision and tested migration are required.
 
-Independent whole-change review and final source acceptance/closure are pending. No new deployment branch merge/push has occurred. The previous seven Minor items remain outside this milestone; no pixel-perfect/screen-reader/WCAG or privacy/retention/child-data/capacity/shared-multi-replica-limiter certification is claimed. Operator provisioning and real teaching content are deliberately not invented. Final review findings will be dispositioned once, with one bounded material correction pass if necessary.
+## Final limitations and integration
+
+No Critical/Important deployment finding remains after the parent's verified correction; no new Minor was raised. The previous seven Minors remain: CMS multiquery detail metadata consistency, unfinished dashboard fallback copy, raw wire-enum presentation, missing unset-password case, wrong-password smoke classification, two Router warnings, and report-only historical-version UUID UX. Their full effects/dispositions are in the earlier full-stack final handoff.
+
+Native execution intentionally used one independent whole-change review and one RED/GREEN material correction, not an invented subsequent reviewer PASS. Source/application packaging remains on both feat/production-deployment branches, not main. Preserve runtime bind-mount worktrees and private operational state. Real admin/school/content/grants, broader governance/audits and independent external availability remain the stated owner gates. The next integration choice is local main merge, push/PR, or keeping branches as-is; no automatic integration is authorized.
