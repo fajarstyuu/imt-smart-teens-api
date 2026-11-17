@@ -60,6 +60,20 @@ Initialization is explicit, never part of ordinary `serve`:
 
 Never copy synthetic integration fixtures into production. Never run `down -v` on production or any existing development project. Existing foundation/application/E2E data stays separate.
 
+## Private administrator seeding
+
+Every active admin has global school/content/report access, including future and archived schools. Legacy permission columns and grant rows are retained as inert compatibility data; school filters are not authorization grants. Student/anonymous/inactive sessions remain denied.
+
+Use the explicit operator action with ADMIN_EMAIL and ADMIN_NAME supplied privately/nonsecretly. Pass the password through stdin from a protected operator input, never as a command argument or shell tracing output:
+
+```sh
+export IMT_ENV_FILE=/private/production/compose.env
+export ADMIN_EMAIL=operator@example.invalid ADMIN_NAME=Admin
+sh deploy/operations.sh seed-admin < /private/operator-password-file
+```
+
+The wrapper uses the already running backend and re-enters `/usr/local/bin/imt-entrypoint` to load its mounted database/CSRF secrets; Docker exec does not inherit PID1's generated environment. It never starts a competing static-IP backend. `seed-admin` normalizes email, validates/hashes the password with Argon2id and atomically inserts one account. A repeated/concurrent existing account is reported unchanged; its identity, name, password and active state are not overwritten or reactivated. An unchanged result does not claim the supplied password was installed. `provision-admin` remains create-only. No email/password is a committed default, and ordinary serve/up/migrate never invokes seeding. Verify a new account's HTTPS login before handing over its password; resets of existing credentials are a separate explicit action.
+
 ## Host domains and certificates
 
 Reviewed host templates are in `deploy/host-nginx/`. Install only the two new IMT site targets and matching symlinks; preserve the portfolio/default site. Save exact prior targets or record their absence in a private backup before changing them.
