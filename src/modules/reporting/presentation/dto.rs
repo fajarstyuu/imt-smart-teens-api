@@ -11,6 +11,9 @@ use serde_json::Number;
 use uuid::Uuid;
 #[derive(Serialize)]
 pub struct StudentSummaryDto {
+    pre_test_score: Option<i32>,
+    post_test_score: Option<i32>,
+    latest_activity_at: DateTime<Utc>,
     student_id: Uuid,
     name: String,
     enrollment_id: Uuid,
@@ -90,6 +93,9 @@ fn points(p: Points) -> AppResult<Number> {
 }
 pub fn summary_dto(s: StudentSummary) -> StudentSummaryDto {
     StudentSummaryDto {
+        pre_test_score: s.pre_test_score,
+        post_test_score: s.post_test_score,
+        latest_activity_at: s.latest_activity_at,
         student_id: s.student.id,
         name: s.student.name,
         enrollment_id: s.enrollment.id,

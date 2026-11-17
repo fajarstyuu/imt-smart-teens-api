@@ -1,5 +1,6 @@
 //! Typed editorial commands and policies; draft identities never become published row IDs.
 mod publication;
+mod release;
 pub use crate::shared::editing::{
     ContentQuery, ContentState, Page, Version, check_revision, revision, text,
 };
@@ -12,6 +13,7 @@ pub use publication::{
     PathPublication, PathPublicationTransaction, PublishedLesson, PublishedLessonVersion,
     publish_path_in_transaction,
 };
+pub use release::{ReviewedRelease, ReviewedRoot, release_in_transaction};
 use std::{collections::HashSet, sync::Arc};
 use uuid::Uuid;
 #[derive(Clone, Debug)]
@@ -188,6 +190,17 @@ impl LessonCms {
         authorize(p)?;
         revision(rev)?;
         publish_path_in_transaction(self.store.begin_path_publication().await?, rev, a).await
+    }
+    /// Publish exactly the drafts an authorized admin reviewed, or publish nothing.
+    pub async fn release(
+        &self,
+        p: &Principal,
+        a: AuditActor,
+        command: ReviewedRelease,
+    ) -> AppResult<PathEditor> {
+        authorize(p)?;
+        revision(command.expected_revision)?;
+        release_in_transaction(self.store.begin_path_publication().await?, command, a).await
     }
     pub async fn path(&self, p: &Principal) -> AppResult<PathEditor> {
         authorize(p)?;

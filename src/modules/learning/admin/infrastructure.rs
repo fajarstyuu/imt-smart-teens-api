@@ -263,22 +263,12 @@ impl LessonStore for PgLessonCms {
     }
     async fn publish(&self, id: Uuid, rev: i64, a: AuditActor) -> AppResult<LessonEditor> {
         let mut tx = self.pool.begin().await.map_err(failure)?;
-        let _p = path(&mut tx, true).await?;
-        let l = lesson(&mut tx, id, true).await?;
-        editable(&l, rev)?;
-        l.draft.validate(true)?;
-        let v = Uuid::new_v4();
-        let number = l.versions.first().map_or(1, |v| v.version + 1);
-        sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description) VALUES($1,$2,$3,$4,$5)").bind(v).bind(id).bind(number).bind(&l.draft.title).bind(&l.draft.description).execute(&mut *tx).await.map_err(failure)?;
-        for (i, s) in l.draft.sections.iter().enumerate() {
-            sqlx::query("INSERT INTO learning_sections(id,lesson_version_id,section_key,position,title,body,required) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(v).bind(s.id).bind(i as i32+1).bind(&s.title).bind(&s.body).bind(s.required).execute(&mut *tx).await.map_err(failure)?;
-        }
-        sqlx::query("UPDATE learning_lessons SET state='published',revision=revision+1,updated_at=now() WHERE id=$1").bind(id).execute(&mut *tx).await.map_err(failure)?;
-        audit(&mut tx, &a, "lesson.publish", "lesson", id, rev + 1).await?;
-        let out = lesson(&mut tx, id, false).await?;
+        path(&mut tx, true).await?;
+        let out = publish_in_connection(&mut tx, id, rev, a).await?;
         tx.commit().await.map_err(failure)?;
         Ok(out)
     }
+
     async fn archive(&self, id: Uuid, rev: i64, a: AuditActor) -> AppResult<LessonEditor> {
         let mut tx = self.pool.begin().await.map_err(failure)?;
         let p = path(&mut tx, true).await?;
@@ -320,4 +310,25 @@ impl LessonStore for PgLessonCms {
         tx.commit().await.map_err(failure)?;
         Ok(out)
     }
+}
+/// Write one immutable lesson inside the transaction owned by the calling workflow.
+async fn publish_in_connection(
+    c: &mut PgConnection,
+    id: Uuid,
+    rev: i64,
+    a: AuditActor,
+) -> AppResult<LessonEditor> {
+    let l = lesson(&mut *c, id, true).await?;
+    editable(&l, rev)?;
+    l.draft.validate(true)?;
+    let v = Uuid::new_v4();
+    let number = l.versions.first().map_or(1, |v| v.version + 1);
+    sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description) VALUES($1,$2,$3,$4,$5)").bind(v).bind(id).bind(number).bind(&l.draft.title).bind(&l.draft.description).execute(&mut *c).await.map_err(failure)?;
+    for (i, s) in l.draft.sections.iter().enumerate() {
+        sqlx::query("INSERT INTO learning_sections(id,lesson_version_id,section_key,position,title,body,required) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(v).bind(s.id).bind(i as i32+1).bind(&s.title).bind(&s.body).bind(s.required).execute(&mut *c).await.map_err(failure)?;
+    }
+    sqlx::query("UPDATE learning_lessons SET state='published',revision=revision+1,updated_at=now() WHERE id=$1").bind(id).execute(&mut *c).await.map_err(failure)?;
+    audit(&mut *c, &a, "lesson.publish", "lesson", id, rev + 1).await?;
+    let out = lesson(&mut *c, id, false).await?;
+    Ok(out)
 }

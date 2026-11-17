@@ -93,6 +93,7 @@ impl ReportQuery {
     }
     fn filters(&self) -> AppResult<Filters> {
         Ok(Filters {
+            q: self.0.get("q").cloned(),
             school_id: self.parse("school_id")?,
             form_date_from: self.date("form_date_from")?,
             form_date_to: self.date("form_date_to")?,
@@ -119,6 +120,7 @@ async fn students(
     q: ReportQuery,
 ) -> Result<Json<PageDto<StudentSummaryDto>>, ApiError> {
     q.only(&[
+        "q",
         "school_id",
         "form_date_from",
         "form_date_to",

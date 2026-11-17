@@ -15,9 +15,15 @@ use uuid::Uuid;
 // An active admin actor is required before every count/order/limit; no school grants.
 fn filtered<'a>(admin: Uuid, f: &'a Filters) -> QueryBuilder<'a, Postgres> {
     let mut b = QueryBuilder::new(
-        "WITH scoped AS (SELECT e.*,s.display_name AS student_name,s.created_at AS student_created_at,CASE WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='pre_test' AND a.status='submitted') THEN 'pre_test' WHEN NOT EXISTS(SELECT 1 FROM learning_path_items i WHERE i.path_version_id=e.path_version_id) OR EXISTS(SELECT 1 FROM learning_path_items i LEFT JOIN learning_lesson_progress p ON p.enrollment_id=e.id AND p.lesson_version_id=i.lesson_version_id WHERE i.path_version_id=e.path_version_id AND p.completed_at IS NULL) THEN 'lessons' WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='quiz' AND a.status='submitted') THEN 'quiz' WHEN NOT EXISTS(SELECT 1 FROM anthropometry_measurements m WHERE m.enrollment_id=e.id) THEN 'calculator' WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='post_test' AND a.status='submitted') THEN 'post_test' ELSE 'completed' END AS stage,(SELECT max(a.submitted_at) FROM assessment_attempts a WHERE a.enrollment_id=e.id) AS latest_submitted_at FROM learning_enrollments e JOIN identity_students s ON s.id=e.student_id WHERE EXISTS(SELECT 1 FROM identity_admins WHERE id=",
+        "WITH scoped AS (SELECT e.*,s.display_name AS student_name,s.created_at AS student_created_at,CASE WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='pre_test' AND a.status='submitted') THEN 'pre_test' WHEN NOT EXISTS(SELECT 1 FROM learning_path_items i WHERE i.path_version_id=e.path_version_id) OR EXISTS(SELECT 1 FROM learning_path_items i LEFT JOIN learning_lesson_progress p ON p.enrollment_id=e.id AND p.lesson_version_id=i.lesson_version_id WHERE i.path_version_id=e.path_version_id AND p.completed_at IS NULL) THEN 'lessons' WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='quiz' AND a.status='submitted') THEN 'quiz' WHEN NOT EXISTS(SELECT 1 FROM anthropometry_measurements m WHERE m.enrollment_id=e.id) THEN 'calculator' WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='post_test' AND a.status='submitted') THEN 'post_test' ELSE 'completed' END AS stage,(SELECT max(a.submitted_at) FROM assessment_attempts a WHERE a.enrollment_id=e.id) AS latest_submitted_at,(SELECT a.score_percent::integer FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='pre_test' AND a.status='submitted' ORDER BY a.submitted_at DESC,a.id DESC LIMIT 1) AS pre_test_score,(SELECT a.score_percent::integer FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='post_test' AND a.status='submitted' ORDER BY a.submitted_at DESC,a.id DESC LIMIT 1) AS post_test_score,GREATEST(e.created_at,e.completed_at,(SELECT max(a.submitted_at) FROM assessment_attempts a WHERE a.enrollment_id=e.id),(SELECT max(a.saved_at) FROM assessment_answers a JOIN assessment_attempts t ON t.id=a.attempt_id WHERE t.enrollment_id=e.id),(SELECT max(GREATEST(p.opened_at,p.completed_at)) FROM learning_lesson_progress p WHERE p.enrollment_id=e.id),(SELECT max(m.created_at) FROM anthropometry_measurements m WHERE m.enrollment_id=e.id)) AS latest_activity_at FROM learning_enrollments e JOIN identity_students s ON s.id=e.student_id WHERE EXISTS(SELECT 1 FROM identity_admins WHERE id=",
     );
     b.push_bind(admin).push(" AND active)");
+    if let Some(q) = &f.q {
+        // Literal substring matching: percent/underscore are text, never wildcard operators.
+        b.push(" AND strpos(lower(s.display_name),lower(")
+            .push_bind(q.trim())
+            .push("))>0");
+    }
     if let Some(id) = f.school_id {
         b.push(" AND e.school_id=").push_bind(id);
     }
@@ -49,6 +55,9 @@ fn filtered<'a>(admin: Uuid, f: &'a Filters) -> QueryBuilder<'a, Postgres> {
 }
 fn summary(r: PgRow) -> AppResult<StudentSummary> {
     Ok(StudentSummary {
+        pre_test_score: r.try_get("pre_test_score").map_err(failure)?,
+        post_test_score: r.try_get("post_test_score").map_err(failure)?,
+        latest_activity_at: r.try_get("latest_activity_at").map_err(failure)?,
         student: Student {
             id: r.try_get("student_id").map_err(failure)?,
             name: r.try_get("student_name").map_err(failure)?,

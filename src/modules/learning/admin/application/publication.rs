@@ -38,6 +38,36 @@ pub struct PathPublication {
 #[async_trait]
 pub trait PathPublicationTransaction: PublishedBankReader {
     async fn lock_path(&mut self) -> AppResult<PathEditor>;
+    // Legacy publication-only adapters need not implement draft release; concrete release
+    // adapters provide all four operations under their existing transaction.
+    async fn lesson_draft(&mut self, _id: Uuid) -> AppResult<LessonEditor> {
+        Err(AppError::Internal)
+    }
+    async fn bank_drafts(
+        &mut self,
+        _id: Uuid,
+    ) -> AppResult<(
+        crate::modules::assessment::admin::application::BankEditor,
+        Vec<crate::modules::assessment::admin::application::QuestionEditor>,
+    )> {
+        Err(AppError::Internal)
+    }
+    async fn publish_draft_lesson(
+        &mut self,
+        _id: Uuid,
+        _revision: i64,
+        _actor: AuditActor,
+    ) -> AppResult<()> {
+        Err(AppError::Internal)
+    }
+    async fn publish_draft_bank(
+        &mut self,
+        _id: Uuid,
+        _revision: i64,
+        _actor: AuditActor,
+    ) -> AppResult<()> {
+        Err(AppError::Internal)
+    }
     async fn lock_lesson_roots(&mut self, sorted_ids: &[Uuid]) -> AppResult<()>;
     async fn published_lesson(&mut self, id: Uuid) -> AppResult<Option<PublishedLesson>>;
     async fn persist_manifest(

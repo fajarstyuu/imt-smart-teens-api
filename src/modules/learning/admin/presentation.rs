@@ -32,6 +32,7 @@ pub fn routes() -> Router<AppState> {
             post(publish_path),
         )
         .route("/api/v1/admin/learning-path/order", put(order))
+        .route("/api/v1/admin/learning-path/release", post(release))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -209,6 +210,41 @@ async fn order(
         data: path_dto(
             s.lesson_cms
                 .order(&a.principal, audit(&a)?, i.lesson_ids, i.expected_revision)
+                .await?,
+        ),
+    }))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewedRootInput {
+    id: Uuid,
+    expected_revision: i64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseInput {
+    expected_revision: i64,
+    lessons: Vec<ReviewedRootInput>,
+    banks: Vec<ReviewedRootInput>,
+}
+async fn release(
+    State(s): State<AppState>,
+    AdminSession(a): AdminSession,
+    ApiJson(input): ApiJson<ReleaseInput>,
+) -> Result<Json<Data<PathEditorDto>>, ApiError> {
+    let map = |r: ReviewedRootInput| ReviewedRoot {
+        id: r.id,
+        expected_revision: r.expected_revision,
+    };
+    let command = ReviewedRelease {
+        expected_revision: input.expected_revision,
+        lessons: input.lessons.into_iter().map(map).collect(),
+        banks: input.banks.into_iter().map(map).collect(),
+    };
+    Ok(Json(Data {
+        data: path_dto(
+            s.lesson_cms
+                .release(&a.principal, audit(&a)?, command)
                 .await?,
         ),
     }))

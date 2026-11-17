@@ -30,6 +30,42 @@ impl PublishedBankReader for PgPathPublication {
 }
 #[async_trait]
 impl PathPublicationTransaction for PgPathPublication {
+    async fn lesson_draft(&mut self, id: Uuid) -> AppResult<LessonEditor> {
+        lesson(&mut self.tx, id, false).await
+    }
+    async fn bank_drafts(
+        &mut self,
+        id: Uuid,
+    ) -> AppResult<(
+        crate::modules::assessment::admin::application::BankEditor,
+        Vec<crate::modules::assessment::admin::application::QuestionEditor>,
+    )> {
+        crate::modules::assessment::admin::infrastructure::release_drafts(&mut self.tx, id).await
+    }
+    async fn publish_draft_lesson(
+        &mut self,
+        id: Uuid,
+        revision: i64,
+        actor: AuditActor,
+    ) -> AppResult<()> {
+        super::publish_in_connection(&mut self.tx, id, revision, actor).await?;
+        Ok(())
+    }
+    async fn publish_draft_bank(
+        &mut self,
+        id: Uuid,
+        revision: i64,
+        actor: AuditActor,
+    ) -> AppResult<()> {
+        crate::modules::assessment::admin::infrastructure::publish_in_connection(
+            &mut self.tx,
+            id,
+            revision,
+            actor,
+        )
+        .await?;
+        Ok(())
+    }
     async fn lock_path(&mut self) -> AppResult<PathEditor> {
         path(&mut self.tx, true).await
     }

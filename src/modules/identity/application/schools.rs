@@ -34,6 +34,7 @@ pub struct SchoolPage {
     pub total: i64,
 }
 /// Audit actor is verified at the application boundary, never mass-assigned from JSON.
+#[derive(Clone)]
 pub struct AuditActor {
     pub admin_id: Uuid,
     pub session_id: Uuid,

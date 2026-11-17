@@ -255,64 +255,86 @@ impl BankStore for PgBankCms {
     }
     async fn publish(&self, bank_id: Uuid, rev: i64, a: AuditActor) -> AppResult<BankEditor> {
         let mut tx = self.pool.begin().await.map_err(failure)?;
-        let b = bank(&mut tx, bank_id, true).await?;
-        check_revision(b.revision, rev)?;
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM assessment_questions WHERE bank_id=$1 AND state<>'archived' ORDER BY position,id FOR UPDATE").bind(bank_id).fetch_all(&mut *tx).await.map_err(failure)?;
-        if ids.is_empty() {
-            return Err(AppError::Invalid("EMPTY_QUESTION_BANK"));
-        }
-        let mut questions = vec![];
-        let mut positions = HashSet::new();
-        for id in ids {
-            let q = question(&mut tx, bank_id, id, false).await?;
-            q.draft.validate()?;
-            if q.position < 1 || !positions.insert(q.position) {
-                return Err(AppError::Invalid("INVALID_QUESTION_ORDER"));
-            }
-            questions.push(q);
-        }
-        validate_score_budget(questions.iter().map(|_| 10000))?;
-        // Construct each complete question before referencing it from bank items. Draft IDs map
-        // to fresh immutable row IDs on every publication; private keys follow that mapping.
-        let mut items = vec![];
-        for q in questions {
-            let version = Uuid::new_v4();
-            let number = q.versions.first().map_or(1, |v| v.version + 1);
-            sqlx::query("INSERT INTO assessment_question_versions(id,question_id,version,text,type,required,scoring_rule,max_points) VALUES($1,$2,$3,$4,$5,$6,'exact_set_v1',1)").bind(version).bind(q.id).bind(number).bind(&q.draft.text).bind(q.draft.question_type.as_str()).bind(q.draft.required).execute(&mut *tx).await.map_err(failure)?;
-            for (i, o) in q.draft.options.iter().enumerate() {
-                sqlx::query("INSERT INTO assessment_options(id,question_version_id,position,text,is_correct) VALUES($1,$2,$3,$4,$5)").bind(Uuid::new_v4()).bind(version).bind(i as i32+1).bind(&o.text).bind(q.draft.correct_option_ids.contains(&o.id)).execute(&mut *tx).await.map_err(failure)?;
-            }
-            sqlx::query(
-                "UPDATE assessment_questions SET state='published',revision=revision+1 WHERE id=$1",
-            )
-            .bind(q.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(failure)?;
-            items.push((version, q.position));
-        }
-        let version = Uuid::new_v4();
-        let number = b.versions.first().map_or(1, |v| v.version + 1);
-        sqlx::query("INSERT INTO assessment_bank_versions(id,bank_id,version) VALUES($1,$2,$3)")
-            .bind(version)
-            .bind(bank_id)
-            .bind(number)
-            .execute(&mut *tx)
-            .await
-            .map_err(failure)?;
-        for (q, pos) in items {
-            sqlx::query("INSERT INTO assessment_bank_items(bank_version_id,question_version_id,position) VALUES($1,$2,$3)").bind(version).bind(q).bind(pos).execute(&mut *tx).await.map_err(failure)?;
-        }
-        sqlx::query(
-            "UPDATE assessment_banks SET revision=revision+1,state='published' WHERE id=$1",
-        )
-        .bind(bank_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(failure)?;
-        audit(&mut tx, &a, "bank.publish", "bank", bank_id, rev + 1).await?;
-        let out = bank(&mut tx, bank_id, false).await?;
+        let out = publish_in_connection(&mut tx, bank_id, rev, a).await?;
         tx.commit().await.map_err(failure)?;
         Ok(out)
     }
+}
+/// Cross-context composition borrows the caller's transaction; this writer never commits.
+pub(crate) async fn publish_in_connection(
+    c: &mut PgConnection,
+    bank_id: Uuid,
+    rev: i64,
+    a: AuditActor,
+) -> AppResult<BankEditor> {
+    let b = bank(&mut *c, bank_id, true).await?;
+    check_revision(b.revision, rev)?;
+    let ids:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM assessment_questions WHERE bank_id=$1 AND state<>'archived' ORDER BY position,id FOR UPDATE").bind(bank_id).fetch_all(&mut *c).await.map_err(failure)?;
+    if ids.is_empty() {
+        return Err(AppError::Invalid("EMPTY_QUESTION_BANK"));
+    }
+    let mut questions = vec![];
+    let mut positions = HashSet::new();
+    for id in ids {
+        let q = question(&mut *c, bank_id, id, false).await?;
+        q.draft.validate()?;
+        if q.position < 1 || !positions.insert(q.position) {
+            return Err(AppError::Invalid("INVALID_QUESTION_ORDER"));
+        }
+        questions.push(q);
+    }
+    validate_score_budget(questions.iter().map(|_| 10000))?;
+    // Construct each complete question before referencing it from bank items. Draft IDs map
+    // to fresh immutable row IDs on every publication; private keys follow that mapping.
+    let mut items = vec![];
+    for q in questions {
+        let version = Uuid::new_v4();
+        let number = q.versions.first().map_or(1, |v| v.version + 1);
+        sqlx::query("INSERT INTO assessment_question_versions(id,question_id,version,text,type,required,scoring_rule,max_points) VALUES($1,$2,$3,$4,$5,$6,'exact_set_v1',1)").bind(version).bind(q.id).bind(number).bind(&q.draft.text).bind(q.draft.question_type.as_str()).bind(q.draft.required).execute(&mut *c).await.map_err(failure)?;
+        for (i, o) in q.draft.options.iter().enumerate() {
+            sqlx::query("INSERT INTO assessment_options(id,question_version_id,position,text,is_correct) VALUES($1,$2,$3,$4,$5)").bind(Uuid::new_v4()).bind(version).bind(i as i32+1).bind(&o.text).bind(q.draft.correct_option_ids.contains(&o.id)).execute(&mut *c).await.map_err(failure)?;
+        }
+        sqlx::query(
+            "UPDATE assessment_questions SET state='published',revision=revision+1 WHERE id=$1",
+        )
+        .bind(q.id)
+        .execute(&mut *c)
+        .await
+        .map_err(failure)?;
+        items.push((version, q.position));
+    }
+    let version = Uuid::new_v4();
+    let number = b.versions.first().map_or(1, |v| v.version + 1);
+    sqlx::query("INSERT INTO assessment_bank_versions(id,bank_id,version) VALUES($1,$2,$3)")
+        .bind(version)
+        .bind(bank_id)
+        .bind(number)
+        .execute(&mut *c)
+        .await
+        .map_err(failure)?;
+    for (q, pos) in items {
+        sqlx::query("INSERT INTO assessment_bank_items(bank_version_id,question_version_id,position) VALUES($1,$2,$3)").bind(version).bind(q).bind(pos).execute(&mut *c).await.map_err(failure)?;
+    }
+    sqlx::query("UPDATE assessment_banks SET revision=revision+1,state='published' WHERE id=$1")
+        .bind(bank_id)
+        .execute(&mut *c)
+        .await
+        .map_err(failure)?;
+    audit(&mut *c, &a, "bank.publish", "bank", bank_id, rev + 1).await?;
+    let out = bank(&mut *c, bank_id, false).await?;
+    Ok(out)
+}
+
+/// Read complete active drafts while the caller holds the bank root lock.
+pub(crate) async fn release_drafts(
+    c: &mut PgConnection,
+    id: Uuid,
+) -> AppResult<(BankEditor, Vec<QuestionEditor>)> {
+    let b = bank(c, id, false).await?;
+    let ids:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM assessment_questions WHERE bank_id=$1 AND state<>'archived' ORDER BY position,id").bind(id).fetch_all(&mut *c).await.map_err(failure)?;
+    let mut questions = Vec::with_capacity(ids.len());
+    for q in ids {
+        questions.push(question(c, id, q, false).await?);
+    }
+    Ok((b, questions))
 }

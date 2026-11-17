@@ -29,6 +29,7 @@ impl Window {
 }
 #[derive(Default)]
 pub struct Filters {
+    pub q: Option<String>,
     pub school_id: Option<Uuid>,
     pub form_date_from: Option<NaiveDate>,
     pub form_date_to: Option<NaiveDate>,
@@ -39,6 +40,9 @@ pub struct Filters {
 }
 impl Filters {
     pub fn validate(&self) -> AppResult<()> {
+        if self.q.as_ref().is_some_and(|q| q.chars().count() > 200) {
+            return Err(AppError::Invalid("INVALID_REPORT_FILTER"));
+        }
         if self
             .form_date_from
             .zip(self.form_date_to)
@@ -98,6 +102,9 @@ impl Points {
     }
 }
 pub struct StudentSummary {
+    pub pre_test_score: Option<i32>,
+    pub post_test_score: Option<i32>,
+    pub latest_activity_at: DateTime<Utc>,
     pub student: Student,
     pub enrollment: Enrollment,
     pub stage: Stage,
