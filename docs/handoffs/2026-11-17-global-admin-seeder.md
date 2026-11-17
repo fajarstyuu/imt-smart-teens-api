@@ -1,7 +1,7 @@
 # Global admin and private seeder — review handoff
 
 - Date: 2026-11-17, runtime UTC+08:00.
-- Status: ready_for_review; production rollout/provisioning NOT yet executed.
+- Status: parent material correction verified after the single independent review; production rollout/provisioning pending.
 - Owner approved one global admin role (no per-school admin/superadmin tier), idempotent private seeding and production rollout. Native implementation with one final independent whole-change review; no new source merge/push authorized.
 - Bases: API8e01eda09f04375602109a948f3e17c245810412; FEe3574bcbd181d1b41d5e5bba9741c8cb8777da4f. Current branches feat/global-admin-seeder under each .worktrees/global-admin-seeder. Backend implementation9aa1ccb/operatorceeb91c; final review heads recorded by Git.
 - Specs read: rules/AGENTS.md, docs/{rules,backend,frontend,delegation,handoff}.md and this feature design/plan. The owner's clarified global-role contract supersedes the old reporting grant policy, not student privacy/session protections. Implementer Mochi/session model; no per-task delegates or invented model/effort routing.
@@ -33,6 +33,28 @@ Operator action uses existing backend /usr/local/bin/imt-entrypoint with stdin; 
 5. Preserve nonsecret seed email/name through sudo's environment reset — fake echo-sudo was insufficient and the stricter control observed failure — cost: operator sudo policy must permit those two environment variables; never preserve passwords/database URLs through this route.
 6. Pin existing stable deployment checkouts to reviewed release SHAs in detached mode at rollout, retaining paths/ignored state — avoids broken bind mounts or build contexts pointing at stale code — cost: do not delete these runtime checkouts; main and feature branches are not merged/pushed by this operation. Rollback restores old checkout SHAs/settings/images.
 
+## Final review disposition and verified correction
+
+ONE independent review sa-0-754a61ef/deleg_b2394bce returned With fixes:0Critical/2Important/1Minor. Backend/global frontend/seeder accepted at implementation-review level; original rollout helper rejected unchanged. Report preserved under docs/reviews/2026-11-17-global-admin-review.md. Optional reviewer fault probe was approval-blocked and did not run; findings came from source/evidence, not alleged production faults.
+
+Parent accepted I1/I2 and performed one bounded correction. deploy/release_guard.py plus five isolated controls define fail-closed approved source/tag identity, independent checkout/settings/image restoration and exact old SHA/image/readiness/settings readback. A failed action or verification yields explicit incomplete/operator-recovery status, never an unsupported restored assertion. Tests first failed for missing release boundary, then all5passed/full24infra; no production fault injection. Private operator helper now consumes an explicit manifest of exact source SHAs, built image IDs, previous SHA/image targets and its own file digest, validates outside the rollback/mutation path, deploys immutable image IDs via protected Compose override, and re-enters the pinned stable seeder wrapper. Rollback uses immutable old IDs and independently checked restoration results with safe phase diagnostics. Final73Rust/0failed/0ignored/fmt/Clippy/lockedbuild and47Vitest+6legacy/build rerun passed; no Rust/runtime frontend source changed in this helper-only correction, so accepted image artifacts remain applicable. Actual guarded preflight/rejection checks and production operations remain the next steps, not claimed here. No second reviewer approval is invented.
+
+Final: minor (deferred) M1: two owning source comments still describe the superseded school-grant model (reporting/application.rs interface comment and identity/application/schools.rs module comment). Runtime global behavior is correct; cost is maintenance confusion until a separately scoped documentation correction. Existing baseline favicon/Router and broader old backlog qualifications remain disclosed.
+
+## Declined-to-judge rulings and costs
+
+7. No per-school/superadmin/selective-admin tier — explicitly rejected by owner — cost if needs change: a new role contract/migration, not hidden grants.
+8. No dropping legacy fields/tables or rewriting migrations — preserve data and compatibility — cost: explicit cleanup later.
+9. No account-management/reset/rename/MFA/public registration UI — not requested and would broaden scope — cost: separate authenticated workflows are still needed for recovery/security enhancements.
+10. Preserve an account surviving failed rollout; stop for reconciliation rather than rotate/delete/retry automatically — prevents credential loss — cost: manual recovery before another attempt.
+11. Private identity/passphrase/permissions are operator acceptance, not reviewer-certified — reviewer could not inspect them; parent used OS CSPRNG263unique familiar words/sixchoices/numeric suffix and0600 files — cost: final real login and secure delivery must succeed before any credential claim.
+12. Public production login/delivery remain operations, not inferred from smoke — cost: keep deployment incomplete until actual acceptance.
+13. Off-host availability, full disaster recovery, governance/retention/compliance and capacity certification remain outside scope — cost: separate audits/tests before those claims.
+14. No new native200% zoom/assistive technology/browser-matrix certification — old evidence is not relabeled — cost: specialized audit still required.
+15. Baseline dev favicon404, two Router warnings and unrelated Minor backlog remain explicit — no new material regression established — cost: separate polish/maintenance; API/page failures never waived.
+16. No editor/history redesign, format overhaul or picker debouncing — existing working flows remain tested and reads bounded/stale-safe — cost: future UX optimization may be warranted.
+17. No main merge/push, stable-worktree deletion, secret rotation or teaching fixtures — outside this feature authorization — cost: owner integration/provisioning choices remain.
+
 ## Pending acceptance
 
-One read-only independent review of both ranges and /home/ubuntu/.hermes/cache/scratch/imt-global-production-rollout.py, then one bounded material fix pass if necessary. After acceptance: privately verify backup catalog, pin stable source paths, select reviewed image tag, recreate only backend/frontend, seed through the real operator wrapper, read back one unchanged-on-replay account, verify actual public HTTPS login/admin routes/logout and unchanged teaching/schema counts. Only then create/deliver private admin-access.txt. Account identity/password remain out of this document and Git. Existing broader governance/accessibility/capacity/external-network limitations and prior unrelated Minor backlog remain; report-only UUID fallback necessarily disappears because all admins can use the version picker.
+After the approved manifest passes actual read-only preflight and rejects deliberately mismatched manifest copies without changing live state: pin stable paths, select immutable reviewed images, recreate only backend/frontend, seed through the real operator wrapper, read back one unchanged-on-replay account, verify actual public HTTPS login/admin routes/logout and unchanged teaching/schema counts. Only then create/deliver private admin-access.txt. Account identity/password remain out of this document and Git. Existing broader governance/accessibility/capacity/external-network limitations and prior unrelated Minor backlog remain; report-only UUID fallback necessarily disappears because all admins can use the version picker.
