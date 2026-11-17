@@ -25,9 +25,11 @@ impl From<AdminPrincipal> for AdminDto {
             id: a.id,
             name: a.name,
             email: a.email,
-            can_manage_schools: a.can_manage_schools,
-            can_manage_content: a.can_manage_content,
-            school_ids: a.school_ids,
+            // Deprecated compatibility fields describe global capabilities,
+            // never a list of schools the caller must be granted separately.
+            can_manage_schools: true,
+            can_manage_content: true,
+            school_ids: Vec::new(),
         }
     }
 }

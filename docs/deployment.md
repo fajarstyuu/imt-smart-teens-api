@@ -56,7 +56,7 @@ Initialization is explicit, never part of ordinary `serve`:
 1. New PostgreSQL volume bootstrap creates limited migrator/app roles, revokes public schema CREATE and sets default runtime DML grants on migrator-owned application tables.
 2. Existing Rust migration CLI runs under the migrator role; runtime does not inherit that role. The operator revokes runtime access to `_sqlx_migrations` after migration.
 3. An explicit private SQL operation serializes empty-content initialization, preserves existing roots/drafts, rejects ambiguous configuration, and creates only missing paired/quiz roots and one path draft. It does not bypass the development-only CLI environment guard.
-4. No production admin, school, student, question, lesson, publication or reporting grant is invented. Privately provision an authorized admin and real school/content/grants separately before enrollment can operate.
+4. Ordinary initialization never invents admin accounts or teaching data. Use the explicit private seed-admin operator command for an authorized account; every active admin has global school/content/report access without school grants. Real schools and published teaching content remain separate owner operations.
 
 Never copy synthetic integration fixtures into production. Never run `down -v` on production or any existing development project. Existing foundation/application/E2E data stays separate.
 

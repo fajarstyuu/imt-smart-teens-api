@@ -551,7 +551,7 @@ async fn content_configuration_missing_permissions_invalid_publication_and_audit
         request(&app, "GET", "/api/v1/admin/lessons", json!(null), &oc, &ot)
             .await
             .0,
-        403
+        200
     );
     sqlx::raw_sql("CREATE FUNCTION fail_cms_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic'; END $$; CREATE TRIGGER fail_cms_audit BEFORE INSERT ON platform_audit_events FOR EACH ROW EXECUTE FUNCTION fail_cms_audit()").execute(&pool).await.unwrap();
     let (s, _, _) = request(

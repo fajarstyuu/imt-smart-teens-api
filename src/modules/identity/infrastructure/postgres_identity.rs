@@ -33,6 +33,24 @@ impl PgIdentityStore {
         sqlx::query("INSERT INTO identity_admins(id,email,display_name,password_hash,can_manage_schools,can_manage_content) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(email).bind(name).bind(hash).bind(manage_schools).bind(manage_content).execute(&self.pool).await.map_err(failure)?;
         Ok(())
     }
+    /// Atomic private seeding. The unique normalized-email index serializes races;
+    /// an existing row (including an inactive account) is never changed/reactivated.
+    pub async fn seed_admin(
+        &self,
+        id: Uuid,
+        email: &str,
+        name: &str,
+        hash: &str,
+    ) -> AppResult<crate::modules::identity::application::SeedAdminOutcome> {
+        use crate::modules::identity::application::SeedAdminOutcome;
+        let result = sqlx::query("INSERT INTO identity_admins(id,email,display_name,password_hash,can_manage_schools,can_manage_content) VALUES($1,$2,$3,$4,true,true) ON CONFLICT (lower(email)) DO NOTHING")
+            .bind(id).bind(email).bind(name).bind(hash).execute(&self.pool).await.map_err(failure)?;
+        Ok(if result.rows_affected() == 1 {
+            SeedAdminOutcome::Created
+        } else {
+            SeedAdminOutcome::ExistingUnchanged
+        })
+    }
     /// Shared transaction helper for Task 2 registration. Caller owns commit/rollback.
     pub async fn insert_in_transaction(
         tx: &mut Transaction<'_, Postgres>,
@@ -56,26 +74,20 @@ struct AdminRow {
     email: String,
     display_name: String,
     password_hash: String,
-    can_manage_schools: bool,
-    can_manage_content: bool,
 }
 async fn principal(pool: &PgPool, row: AdminRow) -> AppResult<AdminCredentials> {
-    let school_ids = sqlx::query_scalar(
-        "SELECT school_id FROM identity_admin_school_grants WHERE admin_id=$1 ORDER BY school_id",
-    )
-    .bind(row.id)
-    .fetch_all(pool)
-    .await
-    .map_err(failure)?;
+    // Do not snapshot grant rows or enumerate all schools in authentication.
+    // Active admins are global; school_ids survives only for old DTO consumers.
+    let _ = pool;
     Ok(AdminCredentials {
         password_hash: row.password_hash,
         principal: AdminPrincipal {
             id: row.id,
             email: row.email,
             name: row.display_name,
-            can_manage_schools: row.can_manage_schools,
-            can_manage_content: row.can_manage_content,
-            school_ids,
+            can_manage_schools: true,
+            can_manage_content: true,
+            school_ids: Vec::new(),
         },
     })
 }

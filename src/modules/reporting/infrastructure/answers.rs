@@ -14,7 +14,7 @@ fn filtered<'a>(
     f: &'a Filters,
 ) -> QueryBuilder<'a, Postgres> {
     let mut b = QueryBuilder::new(
-        "WITH visible AS (SELECT e.student_id,s.display_name AS student_name,e.id AS enrollment_id,e.school_id,e.school_name_at_enrollment,bv.bank_id,bv.id AS bank_version_id,sn.id AS snapshot_id,sq.id AS snapshot_question_id,qv.question_id,qv.id AS question_version_id,sq.position,qv.text,qv.type AS question_type,typ.assessment_type,a.id AS attempt_id,a.attempt_number,a.status AS attempt_status,a.submitted_at,an.revision AS answer_revision,an.saved_at,an.is_correct AS correctness,(an.earned_points*10000)::bigint AS earned,(qv.max_points*10000)::bigint AS maximum FROM learning_enrollments e JOIN identity_admin_school_grants g ON g.school_id=e.school_id AND g.admin_id=",
+        "WITH visible AS (SELECT e.student_id,s.display_name AS student_name,e.id AS enrollment_id,e.school_id,e.school_name_at_enrollment,bv.bank_id,bv.id AS bank_version_id,sn.id AS snapshot_id,sq.id AS snapshot_question_id,qv.question_id,qv.id AS question_version_id,sq.position,qv.text,qv.type AS question_type,typ.assessment_type,a.id AS attempt_id,a.attempt_number,a.status AS attempt_status,a.submitted_at,an.revision AS answer_revision,an.saved_at,an.is_correct AS correctness,(an.earned_points*10000)::bigint AS earned,(qv.max_points*10000)::bigint AS maximum FROM learning_enrollments e JOIN identity_admins current_admin ON current_admin.active AND current_admin.id=",
     );
     b.push_bind(admin).push(" JOIN identity_students s ON s.id=e.student_id JOIN assessment_snapshots sn ON sn.enrollment_id=e.id JOIN assessment_bank_versions bv ON bv.id=sn.bank_version_id JOIN assessment_snapshot_questions sq ON sq.snapshot_id=sn.id JOIN assessment_question_versions qv ON qv.id=sq.question_version_id JOIN (VALUES ('pre_test','paired'),('post_test','paired'),('quiz','quiz')) AS typ(assessment_type,kind) ON typ.kind=sn.kind LEFT JOIN assessment_attempts a ON a.snapshot_id=sn.id AND a.enrollment_id=e.id AND a.assessment_type=typ.assessment_type LEFT JOIN assessment_answers an ON an.attempt_id=a.id AND an.snapshot_question_id=sq.id WHERE TRUE");
     if let Some(a) = attempt {
@@ -167,7 +167,7 @@ pub(super) async fn attempt(
     w: Window,
 ) -> AppResult<Page<QuestionAnswer>> {
     let mut tx = read(pool).await?;
-    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assessment_attempts a JOIN learning_enrollments e ON e.id=a.enrollment_id JOIN identity_admin_school_grants g ON g.school_id=e.school_id AND g.admin_id=$1 WHERE a.id=$2)").bind(admin).bind(attempt).fetch_one(&mut *tx).await.map_err(failure)?;
+    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.id=$2 AND EXISTS(SELECT 1 FROM identity_admins WHERE id=$1 AND active))").bind(admin).bind(attempt).fetch_one(&mut *tx).await.map_err(failure)?;
     if !allowed {
         return Err(AppError::NotFound);
     }

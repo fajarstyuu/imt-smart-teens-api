@@ -159,7 +159,7 @@ async fn login_rotates_session_and_absolute_expiry_or_deactivation_is_enforced(p
     );
 }
 #[sqlx::test]
-async fn csrf_refresh_rebinds_expired_context_and_scope_is_not_catalog_permission(pool: PgPool) {
+async fn csrf_refresh_rebinds_expired_context_and_admin_is_global(pool: PgPool) {
     let id = admin(&pool, true).await;
     let app = app(pool.clone()).await;
     let (c, _) = login(&app, id).await;
@@ -194,5 +194,5 @@ async fn csrf_refresh_rebinds_expired_context_and_scope_is_not_catalog_permissio
         school_ids: vec![],
     };
     assert!(a.require_schools().is_ok());
-    assert!(a.require_school_scope(uuid::Uuid::new_v4()).is_err());
+    assert!(a.require_school_scope(uuid::Uuid::new_v4()).is_ok());
 }

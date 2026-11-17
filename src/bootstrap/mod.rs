@@ -70,12 +70,22 @@ async fn run_command() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() > 1 {
         bail!(
-            "use serve, migrate, provision-admin, or init-content-config without additional arguments"
+            "use serve, migrate, provision-admin, seed-admin, or init-content-config without additional arguments"
         );
     }
     let command = args.first().map(String::as_str).unwrap_or("serve");
-    if !["serve", "migrate", "provision-admin", "init-content-config"].contains(&command) {
-        bail!("unknown command: use serve, migrate, provision-admin, or init-content-config");
+    if ![
+        "serve",
+        "migrate",
+        "provision-admin",
+        "seed-admin",
+        "init-content-config",
+    ]
+    .contains(&command)
+    {
+        bail!(
+            "unknown command: use serve, migrate, provision-admin, seed-admin, or init-content-config"
+        );
     }
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -117,8 +127,8 @@ async fn run_command() -> Result<()> {
         );
         return Ok(());
     }
-    if command == "provision-admin" {
-        let result = provision(pool.clone()).await;
+    if command == "provision-admin" || command == "seed-admin" {
+        let result = provision(pool.clone(), command == "seed-admin").await;
         pool.close().await;
         result?;
         return Ok(());
@@ -180,7 +190,7 @@ async fn serve(pool: PgPool, settings: Settings) -> Result<()> {
         }
     }
 }
-async fn provision(pool: PgPool) -> Result<()> {
+async fn provision(pool: PgPool, idempotent: bool) -> Result<()> {
     let email = normalize_email(&std::env::var("ADMIN_EMAIL").context("ADMIN_EMAIL is required")?)?;
     let name = StudentName::parse(&std::env::var("ADMIN_NAME").context("ADMIN_NAME is required")?)?;
     let password = match std::env::var("ADMIN_PASSWORD") {
@@ -206,7 +216,21 @@ async fn provision(pool: PgPool) -> Result<()> {
     let schools = permission("ADMIN_CAN_MANAGE_SCHOOLS")?;
     let content = permission("ADMIN_CAN_MANAGE_CONTENT")?;
     let hash = ArgonPasswords::new(1).hash(password).await?;
-    PgIdentityStore::new(pool)
+    let store = PgIdentityStore::new(pool);
+    if idempotent {
+        use crate::modules::identity::application::SeedAdminOutcome;
+        match store
+            .seed_admin(uuid::Uuid::new_v4(), &email, name.as_str(), &hash)
+            .await?
+        {
+            SeedAdminOutcome::Created => tracing::info!("admin created with global access"),
+            SeedAdminOutcome::ExistingUnchanged => tracing::info!(
+                "admin unchanged; existing identity, active state and password preserved; supplied password was not installed"
+            ),
+        }
+        return Ok(());
+    }
+    store
         .provision_admin(
             uuid::Uuid::new_v4(),
             &email,
@@ -217,7 +241,7 @@ async fn provision(pool: PgPool) -> Result<()> {
         )
         .await?;
     tracing::info!(
-        "admin provisioned with explicit catalog/content permissions and no reporting school grants"
+        "admin created with global access; legacy flags retained only for compatibility"
     );
     Ok(())
 }

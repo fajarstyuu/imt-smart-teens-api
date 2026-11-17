@@ -1,4 +1,4 @@
-//! Reporting reads only granted schools, immutable snapshots and committed grading facts.
+//! Global admin reporting reads immutable snapshots and committed grading facts.
 #[path = "fixtures/cms.rs"]
 mod cms;
 mod common;
@@ -23,7 +23,7 @@ async fn grant(pool: &PgPool, admin: Uuid, school: Uuid) {
         .unwrap();
 }
 #[sqlx::test(migrations = "./migrations")]
-async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
+async fn global_reports_preserve_counts_pages_and_detail_selection(pool: PgPool) {
     let (app, c, t, editor, content) = setup(&pool).await;
     let a = cms::school(&pool, "A").await;
     let b = cms::school(&pool, "B").await;
@@ -40,8 +40,8 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
     )
     .await;
     assert_eq!(s, 200, "empty scope list: {v}");
-    assert_eq!(v["meta"]["total"], 0);
-    assert_eq!(v["data"], json!([]));
+    assert_eq!(v["meta"]["total"], 3);
+    assert_eq!(v["data"].as_array().unwrap().len(), 1);
     let reader = admin(&pool, false).await;
     grant(&pool, reader, a).await;
     let (rc, rt) = login(&app, reader).await;
@@ -55,7 +55,7 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
     )
     .await;
     assert_eq!(s, 200, "reader with no content/catalog grant: {p1}");
-    assert_eq!(p1["meta"]["total"], 2);
+    assert_eq!(p1["meta"]["total"], 3);
     assert_eq!(p1["data"].as_array().unwrap().len(), 1);
     let (_, p2, _) = request(
         &app,
@@ -66,7 +66,7 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
         &rt,
     )
     .await;
-    assert_eq!(p2["meta"]["total"], 2);
+    assert_eq!(p2["meta"]["total"], 3);
     assert_ne!(p1["data"][0]["student_id"], p2["data"][0]["student_id"]);
     let (_, empty, _) = request(
         &app,
@@ -77,7 +77,7 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
         &rt,
     )
     .await;
-    assert_eq!(empty["meta"]["total"], 2);
+    assert_eq!(empty["meta"]["total"], 3);
     assert_eq!(empty["data"], json!([]));
     assert_eq!(
         request(
@@ -90,7 +90,7 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
         )
         .await
         .0,
-        403
+        200
     );
     let (_, pre_versions, _) = request(
         &app,
@@ -110,7 +110,7 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
         format!("/api/v1/admin/reports/question-answers?question_version_id={version}&limit=1");
     let (s, r, _) = request(&app, "GET", &report, json!(null), &rc, &rt).await;
     assert_eq!(s, 200, "{r}");
-    assert_eq!(r["meta"]["total"], 4);
+    assert_eq!(r["meta"]["total"], 6);
     assert_eq!(r["data"].as_array().unwrap().len(), 1);
     let (_, r, _) = request(
         &app,
@@ -121,10 +121,10 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
         &rt,
     )
     .await;
-    assert_eq!(r["meta"]["total"], 4);
+    assert_eq!(r["meta"]["total"], 6);
     assert_eq!(r["data"], json!([]));
     let (_, r, _) = request(&app, "GET", &report, json!(null), &c, &t).await;
-    assert_eq!(r["meta"]["total"], 0);
+    assert_eq!(r["meta"]["total"], 6);
     assert_eq!(
         request(
             &app,
@@ -140,21 +140,27 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
     );
     let foreign_id = foreign["student"]["id"].as_str().unwrap();
     let foreign_attempt = student::attempt(&app, &bc, &bt, "pre_test").await;
-    for path in [
-        format!("/api/v1/admin/students/{foreign_id}/results"),
-        format!(
-            "/api/v1/admin/students/{}/results?enrollment_id={}",
-            one["student"]["id"].as_str().unwrap(),
-            foreign["enrollment"]["id"].as_str().unwrap()
+    for (path, expected) in [
+        (format!("/api/v1/admin/students/{foreign_id}/results"), 200),
+        (
+            format!(
+                "/api/v1/admin/students/{}/results?enrollment_id={}",
+                one["student"]["id"].as_str().unwrap(),
+                foreign["enrollment"]["id"].as_str().unwrap()
+            ),
+            404,
         ),
-        format!(
-            "/api/v1/admin/attempts/{}/answers",
-            foreign_attempt["id"].as_str().unwrap()
+        (
+            format!(
+                "/api/v1/admin/attempts/{}/answers",
+                foreign_attempt["id"].as_str().unwrap()
+            ),
+            200,
         ),
     ] {
         assert_eq!(
             request(&app, "GET", &path, json!(null), &rc, &rt).await.0,
-            404
+            expected
         );
     }
     let id = one["student"]["id"].as_str().unwrap();
@@ -167,13 +173,14 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
         v["data"]["lessons"][0]["lesson_version_id"],
         content.lesson["versions"][0]["id"]
     );
-    // Only visible enrollment candidates participate in ambiguity; foreign school candidates do not.
+    // Global admins must explicitly select among multiple enrollments across schools.
     let extra = Uuid::new_v4();
     sqlx::query("INSERT INTO learning_enrollments(id,student_id,school_id,school_name_at_enrollment,form_date,path_version_id) SELECT $1,student_id,$2,'B',form_date,path_version_id FROM learning_enrollments WHERE id=$3").bind(extra).bind(b).bind(one["enrollment"]["id"].as_str().unwrap().parse::<Uuid>().unwrap()).execute(&pool).await.unwrap();
     assert_eq!(
         request(&app, "GET", &path, json!(null), &rc, &rt).await.0,
-        200
+        409
     );
+    // Legacy grant insertion has no effect on the global policy.
     grant(&pool, reader, b).await;
     let (s, v, _) = request(&app, "GET", &path, json!(null), &rc, &rt).await;
     assert_eq!(s, 409, "{v}");
@@ -200,10 +207,10 @@ async fn report_scope_precedes_counts_pages_and_detail_selection(pool: PgPool) {
             .0,
         401
     );
-    // Empty-scope editor remains unable to infer student existence.
+    // Another authenticated admin sees the same global enrollment ambiguity.
     assert_eq!(
         request(&app, "GET", &path, json!(null), &c, &t).await.0,
-        404
+        409
     );
     let _ = (editor, two);
 }

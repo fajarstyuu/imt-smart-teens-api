@@ -259,7 +259,7 @@ async fn sessions_csrf_permissions_expiry_and_logout(pool: PgPool) {
         request(&app, "GET", "/api/v1/admin/schools", json!(null), &lc, "")
             .await
             .0,
-        403
+        200
     );
     assert_eq!(
         request(
@@ -272,7 +272,7 @@ async fn sessions_csrf_permissions_expiry_and_logout(pool: PgPool) {
         )
         .await
         .0,
-        403
+        201
     );
     assert_eq!(
         request(

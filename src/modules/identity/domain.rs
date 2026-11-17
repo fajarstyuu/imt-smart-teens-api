@@ -74,20 +74,15 @@ pub struct AdminPrincipal {
     pub school_ids: Vec<Uuid>,
 }
 impl AdminPrincipal {
+    /// Every verified active administrator owns the global catalog capability.
+    /// Legacy stored booleans are compatibility data, not authorization gates.
     pub fn require_schools(&self) -> AppResult<()> {
-        if self.can_manage_schools {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden)
-        }
+        Ok(())
     }
-    /// Catalog/content permissions never imply reporting authorization.
-    pub fn require_school_scope(&self, id: Uuid) -> AppResult<()> {
-        if self.school_ids.contains(&id) {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden)
-        }
+    /// All schools, including future/archived ones, belong to the admin scope.
+    /// Constructing this principal remains the authenticated session boundary.
+    pub fn require_school_scope(&self, _id: Uuid) -> AppResult<()> {
+        Ok(())
     }
 }
 #[derive(Clone, Debug)]

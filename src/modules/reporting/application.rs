@@ -231,11 +231,9 @@ impl Reports {
         Self { reader }
     }
     fn scope(p: &Principal, f: &Filters) -> AppResult<Uuid> {
-        let a = p.admin()?;
-        if let Some(s) = f.school_id {
-            a.require_school_scope(s)?;
-        }
-        Ok(a.id)
+        // A school filter selects data, not an additional authorization scope.
+        let _ = f;
+        Ok(p.admin()?.id)
     }
     pub async fn students(
         &self,
