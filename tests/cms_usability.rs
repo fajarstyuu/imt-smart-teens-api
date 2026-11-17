@@ -113,6 +113,20 @@ async fn invalid_bank_rolls_back_other_bank_and_lesson_publications(pool: PgPool
 #[sqlx::test(migrations = "./migrations")]
 async fn concurrent_release_exactly_one_wins_and_csrf_admin_are_required(pool: PgPool) {
     let (app, c, t, cmd) = setup(&pool).await;
+    let (anonymous_cookie, anonymous_token) = csrf(&app).await;
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            RELEASE,
+            cmd.clone(),
+            &anonymous_cookie,
+            &anonymous_token
+        )
+        .await
+        .0,
+        401
+    );
     assert_eq!(
         request(&app, "POST", RELEASE, cmd.clone(), "", "").await.0,
         403
