@@ -1,7 +1,7 @@
 # Global admin and private seeder design
 
 Date: 2026-11-17 (runtime UTC+08:00).
-Status: owner confirmed the product model; implementation/deployment plan pending review.
+Status: owner approved the global-admin model and this implementation/production rollout plan with Gas. Implementation evidence and final acceptance live in the dated handoff.
 
 ## Owner-approved intent
 
