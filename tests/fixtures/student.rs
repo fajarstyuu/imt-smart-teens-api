@@ -52,7 +52,18 @@ pub async fn weighted_content(pool: &PgPool, weights: [[&str; 2]; 2]) -> (Uuid, 
         .execute(&mut *tx)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description) VALUES($1,$2,1,'Synthetic lesson','Synthetic description')").bind(version).bind(lesson).execute(&mut *tx).await.unwrap();
+        let option_a = Uuid::new_v4();
+        let option_b = Uuid::new_v4();
+        let quiz = serde_json::json!({
+            "text": format!("Synthetic lesson {position} question"),
+            "options": [
+                {"id": option_a, "text": "Synthetic answer A"},
+                {"id": option_b, "text": "Synthetic answer B"}
+            ],
+            "correct_option_id": option_a
+        });
+        sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description,quiz_payload) VALUES($1,$2,1,'Synthetic lesson','Synthetic description',$3)")
+            .bind(version).bind(lesson).bind(quiz).execute(&mut *tx).await.unwrap();
         sqlx::query("INSERT INTO learning_sections(id,lesson_version_id,section_key,position,title,body,required) VALUES($1,$2,$3,1,'Synthetic section','Protected frozen body',true)").bind(Uuid::new_v4()).bind(version).bind(Uuid::new_v4()).execute(&mut *tx).await.unwrap();
         sqlx::query("INSERT INTO learning_path_items(path_version_id,lesson_version_id,position) VALUES($1,$2,$3)").bind(path).bind(version).bind(position).execute(&mut *tx).await.unwrap();
     }

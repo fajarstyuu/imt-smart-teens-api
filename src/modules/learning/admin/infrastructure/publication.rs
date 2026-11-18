@@ -124,7 +124,7 @@ impl PathPublicationTransaction for PgPathPublication {
     ) -> AppResult<PathEditor> {
         let c = &mut *self.tx;
         sqlx::query("INSERT INTO learning_path_versions(id,version,paired_bank_version_id,quiz_bank_version_id) VALUES($1,$2,$3,$4)")
-            .bind(p.id).bind(p.version).bind(p.bank_versions[0]).bind(p.bank_versions[1]).execute(&mut *c).await.map_err(failure)?;
+            .bind(p.id).bind(p.version).bind(p.paired_bank_version_id).bind(p.quiz_bank_version_id).execute(&mut *c).await.map_err(failure)?;
         for (i, v) in p.lesson_versions.iter().enumerate() {
             sqlx::query("INSERT INTO learning_path_items(path_version_id,lesson_version_id,position) VALUES($1,$2,$3)")
                 .bind(p.id).bind(v).bind(i as i32+1).execute(&mut *c).await.map_err(failure)?;

@@ -41,7 +41,7 @@ async fn empty_bootstrap_is_production_safe_idempotent_and_preserves_admin(pool:
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(roots, (2, 1, 0));
+    assert_eq!(roots, (1, 1, 0));
     let path_before: (Uuid, i64, Vec<Uuid>) =
         sqlx::query_as("SELECT id,revision,lesson_ids FROM learning_path_drafts")
             .fetch_one(&pool)

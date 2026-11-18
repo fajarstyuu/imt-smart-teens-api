@@ -36,6 +36,11 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/student/me", get(me))
         .route("/api/v1/student/progress", get(progress))
         .route("/api/v1/student/lessons/{lesson_id}", get(lesson))
+        .route("/api/v1/student/lessons/{lesson_id}/quiz", get(lesson_quiz))
+        .route(
+            "/api/v1/student/lessons/{lesson_id}/quiz/answers",
+            post(answer_lesson_quiz),
+        )
         .route("/api/v1/student/lessons/{lesson_id}/opened", post(opened))
         .route(
             "/api/v1/student/lessons/{lesson_id}/completion",
@@ -105,6 +110,40 @@ async fn lesson(
     Ok(Json(
         json!({"data":LessonViewDto::from(s.students.lesson(scope(&a)?,id).await?)}),
     ))
+}
+async fn lesson_quiz(
+    State(s): State<AppState>,
+    StudentSession(a): StudentSession,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        json!({"data":LessonQuizViewDto::from(s.students.lesson_quiz(scope(&a)?, id).await?)}),
+    ))
+}
+#[derive(Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct LessonQuizAnswerRequest {
+    option_id: Uuid,
+    expected_revision: i64,
+}
+async fn answer_lesson_quiz(
+    State(s): State<AppState>,
+    StudentSession(a): StudentSession,
+    ApiPath(id): ApiPath<Uuid>,
+    headers: HeaderMap,
+    ApiJson(input): ApiJson<LessonQuizAnswerRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let result = s
+        .students
+        .answer_lesson_quiz(
+            scope(&a)?,
+            id,
+            input.option_id,
+            input.expected_revision,
+            operation(&a, &headers, &input)?,
+        )
+        .await?;
+    Ok(Json(json!({"data":LessonQuizAnswerDto::from(result)})))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

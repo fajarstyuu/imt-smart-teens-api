@@ -32,7 +32,8 @@ pub struct PathPublication {
     pub path_id: Uuid,
     pub version: i32,
     pub revision: i64,
-    pub bank_versions: [Uuid; 2],
+    pub paired_bank_version_id: Uuid,
+    pub quiz_bank_version_id: Option<Uuid>,
     pub lesson_versions: Vec<Uuid>,
 }
 #[async_trait]
@@ -94,23 +95,13 @@ pub async fn publish_path_in_transaction(
         return Err(AppError::Invalid("INVALID_PATH_ORDER"));
     }
     // Every CMS writer observes path -> sorted banks -> sorted lesson roots.
-    let mut banks = [p.paired_bank_id, p.quiz_bank_id];
-    banks.sort();
+    let banks = [p.paired_bank_id];
     tx.lock_bank_roots(&banks).await?;
-    let mut bank_versions = [Uuid::nil(); 2];
-    for (index, (id, kind)) in [
-        (p.paired_bank_id, BankKind::Paired),
-        (p.quiz_bank_id, BankKind::Quiz),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let bank = tx
-            .published_bank(id)
-            .await?
-            .ok_or(AppError::Conflict("CONTENT_NOT_AVAILABLE"))?;
-        bank_versions[index] = bank.admit(id, kind)?;
-    }
+    let paired_bank = tx
+        .published_bank(p.paired_bank_id)
+        .await?
+        .ok_or(AppError::Conflict("CONTENT_NOT_AVAILABLE"))?
+        .admit(p.paired_bank_id, BankKind::Paired)?;
     let mut sorted = p.lesson_ids.clone();
     sorted.sort();
     tx.lock_lesson_roots(&sorted).await?;
@@ -130,7 +121,8 @@ pub async fn publish_path_in_transaction(
                 path_id: p.id,
                 version: p.versions.first().map_or(1, |v| v.version + 1),
                 revision: rev + 1,
-                bank_versions,
+                paired_bank_version_id: paired_bank,
+                quiz_bank_version_id: None,
                 lesson_versions,
             },
             actor,

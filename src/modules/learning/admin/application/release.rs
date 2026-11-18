@@ -28,8 +28,7 @@ pub async fn release_in_transaction(
     if ids != path.lesson_ids {
         return Err(AppError::Conflict("STALE_CONTENT_REVIEW"));
     }
-    let mut banks = [path.paired_bank_id, path.quiz_bank_id];
-    banks.sort();
+    let banks = [path.paired_bank_id];
     let mut reviewed_banks: Vec<_> = command.banks.iter().map(|b| b.id).collect();
     reviewed_banks.sort();
     if reviewed_banks != banks {
@@ -57,12 +56,7 @@ pub async fn release_in_transaction(
         if bank.state == ContentState::Archived {
             return Err(AppError::Conflict("CONTENT_ARCHIVED"));
         }
-        let expected = if root.id == path.paired_bank_id {
-            "paired"
-        } else {
-            "quiz"
-        };
-        if bank.kind != expected {
+        if root.id != path.paired_bank_id || bank.kind != "paired" {
             return Err(AppError::Conflict("CONTENT_NOT_AVAILABLE"));
         }
         if questions.is_empty() {

@@ -37,13 +37,14 @@ impl PgStudentTransaction {
 #[async_trait]
 impl AssessmentRepository for PgStudentTransaction {
     async fn pin_snapshots(&mut self, enrollment: Uuid, path: &PublishedPath) -> AppResult<()> {
-        for (kind, bank) in [("paired", path.paired_bank), ("quiz", path.quiz_bank)] {
-            let snapshot = Uuid::new_v4();
-            sqlx::query("INSERT INTO assessment_snapshots(id,enrollment_id,kind,bank_version_id) VALUES($1,$2,$3,$4)").bind(snapshot).bind(enrollment).bind(kind).bind(bank).execute(&mut *self.tx).await.map_err(failure)?;
-            let rows:Vec<(Uuid,i32)>=sqlx::query_as("SELECT question_version_id,position FROM assessment_bank_items WHERE bank_version_id=$1 ORDER BY position").bind(bank).fetch_all(&mut *self.tx).await.map_err(failure)?;
-            for (version, position) in rows {
-                sqlx::query("INSERT INTO assessment_snapshot_questions(id,snapshot_id,question_version_id,position) VALUES($1,$2,$3,$4)").bind(Uuid::new_v4()).bind(snapshot).bind(version).bind(position).execute(&mut *self.tx).await.map_err(failure)?;
-            }
+        let snapshot = Uuid::new_v4();
+        sqlx::query("INSERT INTO assessment_snapshots(id,enrollment_id,kind,bank_version_id) VALUES($1,$2,'paired',$3)")
+            .bind(snapshot).bind(enrollment).bind(path.paired_bank).execute(&mut *self.tx).await.map_err(failure)?;
+        let rows: Vec<(Uuid,i32)> = sqlx::query_as("SELECT question_version_id,position FROM assessment_bank_items WHERE bank_version_id=$1 ORDER BY position")
+            .bind(path.paired_bank).fetch_all(&mut *self.tx).await.map_err(failure)?;
+        for (version, position) in rows {
+            sqlx::query("INSERT INTO assessment_snapshot_questions(id,snapshot_id,question_version_id,position) VALUES($1,$2,$3,$4)")
+                .bind(Uuid::new_v4()).bind(snapshot).bind(version).bind(position).execute(&mut *self.tx).await.map_err(failure)?;
         }
         Ok(())
     }

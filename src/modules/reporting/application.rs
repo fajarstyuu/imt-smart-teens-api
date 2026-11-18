@@ -62,7 +62,6 @@ pub fn parse_stage(s: &str) -> AppResult<Stage> {
     match s {
         "pre_test" => Ok(Stage::PreTest),
         "lessons" => Ok(Stage::Lessons),
-        "quiz" => Ok(Stage::Quiz),
         "calculator" => Ok(Stage::Calculator),
         "post_test" => Ok(Stage::PostTest),
         "completed" => Ok(Stage::Completed),
@@ -73,7 +72,6 @@ pub fn stage_name(s: Stage) -> &'static str {
     match s {
         Stage::PreTest => "pre_test",
         Stage::Lessons => "lessons",
-        Stage::Quiz => "quiz",
         Stage::Calculator => "calculator",
         Stage::PostTest => "post_test",
         Stage::Completed => "completed",
@@ -126,7 +124,18 @@ pub struct StudentResults {
     pub summary: StudentSummary,
     pub attempts: Vec<AttemptSummary>,
     pub lessons: Vec<Lesson>,
+    pub lesson_quizzes: Vec<LessonQuizReport>,
     pub measurements: Vec<Measurement>,
+}
+pub struct LessonQuizReport {
+    pub lesson_id: Uuid,
+    pub lesson_version_id: Uuid,
+    pub lesson_title: String,
+    pub question: String,
+    pub options: Vec<ReportOption>,
+    pub first_answer: Option<ReportOption>,
+    pub attempt_count: i32,
+    pub status: &'static str,
 }
 #[derive(Clone, Copy)]
 pub enum AnswerState {
@@ -147,6 +156,7 @@ impl AnswerState {
         }
     }
 }
+#[derive(Clone)]
 pub struct ReportOption {
     pub id: Uuid,
     pub text: String,

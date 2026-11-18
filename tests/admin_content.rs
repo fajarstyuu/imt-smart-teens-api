@@ -35,7 +35,7 @@ async fn questions_bank_publication_versions_keys_and_revisions(pool: PgPool) {
     )
     .await;
     assert_eq!(s, 200, "banks list: {v}");
-    assert_eq!(v["meta"]["total"], 2);
+    assert_eq!(v["meta"]["total"], 1);
     let bank = v["data"][0]["id"].as_str().unwrap();
     let base = format!("/api/v1/admin/question-banks/{bank}");
     assert_eq!(
@@ -203,7 +203,11 @@ async fn question_validation_bank_ownership_and_transactional_publication(pool: 
     .await;
     assert_eq!(status, 200, "banks: {banks}");
     let bank = banks["data"][0]["id"].as_str().unwrap();
-    let other = banks["data"][1]["id"].as_str().unwrap();
+    let other_id: Uuid = sqlx::query_scalar("SELECT id FROM assessment_banks WHERE kind='quiz'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let other = other_id.to_string();
     let base = format!("/api/v1/admin/question-banks/{bank}");
     for invalid in [
         "empty",
@@ -344,7 +348,7 @@ async fn explicit_dev_init_is_idempotent_preserves_drafts_and_refuses_production
             .fetch_one(&pool)
             .await
             .unwrap(),
-        2
+        1
     );
     let original: (Uuid, i64) = sqlx::query_as("SELECT id,revision FROM learning_path_drafts")
         .fetch_one(&pool)

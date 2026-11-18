@@ -100,6 +100,8 @@ struct StoredLesson {
     title: String,
     position: i32,
     opened_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    reading_completed_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
 }
 impl From<Lesson> for StoredLesson {
@@ -110,6 +112,7 @@ impl From<Lesson> for StoredLesson {
             title: v.title,
             position: v.position,
             opened_at: v.opened_at,
+            reading_completed_at: v.reading_completed_at,
             completed_at: v.completed_at,
         }
     }
@@ -122,6 +125,7 @@ impl From<StoredLesson> for Lesson {
             title: v.title,
             position: v.position,
             opened_at: v.opened_at,
+            reading_completed_at: v.reading_completed_at,
             completed_at: v.completed_at,
         }
     }
@@ -140,7 +144,6 @@ impl From<Stage> for StoredStage {
         match v {
             Stage::PreTest => Self::PreTest,
             Stage::Lessons => Self::Lessons,
-            Stage::Quiz => Self::Quiz,
             Stage::Calculator => Self::Calculator,
             Stage::PostTest => Self::PostTest,
             Stage::Completed => Self::Completed,
@@ -151,8 +154,7 @@ impl From<StoredStage> for Stage {
     fn from(v: StoredStage) -> Self {
         match v {
             StoredStage::PreTest => Self::PreTest,
-            StoredStage::Lessons => Self::Lessons,
-            StoredStage::Quiz => Self::Quiz,
+            StoredStage::Lessons | StoredStage::Quiz => Self::Lessons,
             StoredStage::Calculator => Self::Calculator,
             StoredStage::PostTest => Self::PostTest,
             StoredStage::Completed => Self::Completed,
@@ -452,6 +454,52 @@ enum StoredResult {
         measurement: StoredMeasurement,
         progress: StoredProgress,
     },
+    LessonQuizAnswer(StoredLessonQuizAnswer),
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredLessonQuizAnswer {
+    lesson_id: Uuid,
+    lesson_version_id: Uuid,
+    selected_option_id: Uuid,
+    correct: bool,
+    first_answer_option_id: Uuid,
+    attempt_count: i32,
+    revision: i64,
+    mastered: bool,
+    progress: StoredProgress,
+}
+impl From<LessonQuizAnswerResult> for StoredLessonQuizAnswer {
+    fn from(v: LessonQuizAnswerResult) -> Self {
+        Self {
+            lesson_id: v.lesson_id,
+            lesson_version_id: v.lesson_version_id,
+            selected_option_id: v.selected_option_id,
+            correct: v.correct,
+            first_answer_option_id: v.state.first_answer_option_id,
+            attempt_count: v.state.attempt_count,
+            revision: v.state.revision,
+            mastered: v.state.mastered,
+            progress: v.progress.into(),
+        }
+    }
+}
+impl From<StoredLessonQuizAnswer> for LessonQuizAnswerResult {
+    fn from(v: StoredLessonQuizAnswer) -> Self {
+        Self {
+            lesson_id: v.lesson_id,
+            lesson_version_id: v.lesson_version_id,
+            selected_option_id: v.selected_option_id,
+            correct: v.correct,
+            state: LessonQuizAnswerState {
+                first_answer_option_id: v.first_answer_option_id,
+                attempt_count: v.attempt_count,
+                revision: v.revision,
+                mastered: v.mastered,
+            },
+            progress: v.progress.into(),
+        }
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -479,6 +527,7 @@ pub(super) fn encode(result: OperationResult) -> AppResult<(i32, serde_json::Val
                 progress: v.progress.into(),
             },
         ),
+        OperationResult::LessonQuizAnswer(v) => (200, StoredResult::LessonQuizAnswer(v.into())),
     };
     Ok((
         status,
@@ -514,6 +563,7 @@ pub(super) fn decode(status: i32, body: serde_json::Value) -> AppResult<Operatio
                 progress: progress.into(),
             }),
         ),
+        StoredResult::LessonQuizAnswer(v) => (200, OperationResult::LessonQuizAnswer(v.into())),
     };
     if status != expected {
         return Err(AppError::Internal);

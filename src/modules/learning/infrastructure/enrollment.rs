@@ -2,8 +2,15 @@
 use super::PgStudentTransaction;
 use crate::{
     modules::{
+        assessment::lesson_quiz::LessonQuizDraft,
         identity::{application::NewSession, infrastructure::PgIdentityStore},
-        learning::{application::ports::*, domain::*},
+        learning::{
+            application::{
+                ports::*,
+                results::{LessonQuizAnswerState, LessonQuizOptionView, LessonQuizView},
+            },
+            domain::*,
+        },
     },
     platform::database::failure,
     shared::error::{AppError, AppResult},
@@ -54,42 +61,32 @@ impl IdentityRepository for PgStudentTransaction {
 impl LearningRepository for PgStudentTransaction {
     async fn published_path(&mut self) -> AppResult<Option<PublishedPath>> {
         let row=sqlx::query("SELECT p.id,p.paired_bank_version_id,p.quiz_bank_version_id,
-            pb.kind AS paired_kind,qb.kind AS quiz_kind,
+            pb.kind AS paired_kind,
             (SELECT count(*) FROM learning_path_items i WHERE i.path_version_id=p.id) AS lesson_count,
-            (SELECT count(*) FROM assessment_bank_items i WHERE i.bank_version_id=p.paired_bank_version_id) AS paired_question_count,
-            (SELECT count(*) FROM assessment_bank_items i WHERE i.bank_version_id=p.quiz_bank_version_id) AS quiz_question_count
+            (SELECT count(*) FROM assessment_bank_items i WHERE i.bank_version_id=p.paired_bank_version_id) AS paired_question_count
             FROM learning_path_versions p
             JOIN assessment_bank_versions pv ON pv.id=p.paired_bank_version_id
             JOIN assessment_banks pb ON pb.id=pv.bank_id
-            JOIN assessment_bank_versions qv ON qv.id=p.quiz_bank_version_id
-            JOIN assessment_banks qb ON qb.id=qv.bank_id
             ORDER BY p.version DESC LIMIT 1").fetch_optional(&mut *self.tx).await.map_err(failure)?;
         let Some(r) = row else {
             return Ok(None);
         };
         let paired_bank: Uuid = r.try_get("paired_bank_version_id").map_err(failure)?;
-        let quiz_bank: Uuid = r.try_get("quiz_bank_version_id").map_err(failure)?;
-        // Read the selected immutable versions, not a second independently selected latest path.
-        let weights = sqlx::query_as::<_, (Uuid, i64)>("SELECT i.bank_version_id,(q.max_points*10000)::bigint FROM assessment_bank_items i JOIN assessment_question_versions q ON q.id=i.question_version_id WHERE i.bank_version_id=$1 OR i.bank_version_id=$2").bind(paired_bank).bind(quiz_bank).fetch_all(&mut *self.tx).await.map_err(failure)?;
+        let quiz_bank: Option<Uuid> = r.try_get("quiz_bank_version_id").map_err(failure)?;
+        // Enrollment starts only from the immutable paired pre/post snapshot.
+        let paired_weights = sqlx::query_scalar::<_, i64>("SELECT (q.max_points*10000)::bigint FROM assessment_bank_items i JOIN assessment_question_versions q ON q.id=i.question_version_id WHERE i.bank_version_id=$1 ORDER BY i.position")
+            .bind(paired_bank).fetch_all(&mut *self.tx).await.map_err(failure)?;
         Ok(Some(PublishedPath {
             id: r.try_get("id").map_err(failure)?,
             paired_bank,
             quiz_bank,
             paired_kind: r.try_get("paired_kind").map_err(failure)?,
-            quiz_kind: r.try_get("quiz_kind").map_err(failure)?,
+            quiz_kind: None,
             lesson_count: r.try_get("lesson_count").map_err(failure)?,
             paired_question_count: r.try_get("paired_question_count").map_err(failure)?,
-            quiz_question_count: r.try_get("quiz_question_count").map_err(failure)?,
-            paired_weights: weights
-                .iter()
-                .filter(|(id, _)| *id == paired_bank)
-                .map(|(_, w)| *w)
-                .collect(),
-            quiz_weights: weights
-                .iter()
-                .filter(|(id, _)| *id == quiz_bank)
-                .map(|(_, w)| *w)
-                .collect(),
+            quiz_question_count: None,
+            paired_weights,
+            quiz_weights: vec![],
         }))
     }
     async fn insert_enrollment(
@@ -118,7 +115,7 @@ impl LearningRepository for PgStudentTransaction {
             id: s.student_id,
             name: r.try_get("display_name").map_err(failure)?,
         };
-        let rows=sqlx::query("SELECT v.lesson_id,v.id AS lesson_version_id,v.title,i.position,p.opened_at,p.completed_at FROM learning_path_items i JOIN learning_lesson_versions v ON v.id=i.lesson_version_id LEFT JOIN learning_lesson_progress p ON p.lesson_version_id=v.id AND p.enrollment_id=$1 WHERE i.path_version_id=$2 ORDER BY i.position,v.id").bind(s.enrollment_id).bind(enrollment.path_version_id).fetch_all(&mut *self.tx).await.map_err(failure)?;
+        let rows=sqlx::query("SELECT v.lesson_id,v.id AS lesson_version_id,v.title,i.position,p.opened_at,p.reading_completed_at,a.mastered_at AS completed_at FROM learning_path_items i JOIN learning_lesson_versions v ON v.id=i.lesson_version_id LEFT JOIN learning_lesson_progress p ON p.lesson_version_id=v.id AND p.enrollment_id=$1 LEFT JOIN learning_lesson_quiz_attempts a ON a.lesson_version_id=v.id AND a.enrollment_id=$1 WHERE i.path_version_id=$2 ORDER BY i.position,v.id").bind(s.enrollment_id).bind(enrollment.path_version_id).fetch_all(&mut *self.tx).await.map_err(failure)?;
         let lessons = rows
             .into_iter()
             .map(|r| {
@@ -128,6 +125,7 @@ impl LearningRepository for PgStudentTransaction {
                     title: r.try_get("title").map_err(failure)?,
                     position: r.try_get("position").map_err(failure)?,
                     opened_at: r.try_get("opened_at").map_err(failure)?,
+                    reading_completed_at: r.try_get("reading_completed_at").map_err(failure)?,
                     completed_at: r.try_get("completed_at").map_err(failure)?,
                 })
             })
@@ -170,6 +168,105 @@ impl LearningRepository for PgStudentTransaction {
             visited_section_ids,
         })
     }
+    async fn lesson_quiz_view(&mut self, s: StudentScope, l: &Lesson) -> AppResult<LessonQuizView> {
+        let row = sqlx::query("SELECT v.quiz_payload,a.first_option_id,a.attempt_count,a.revision,a.mastered FROM learning_lesson_versions v LEFT JOIN learning_lesson_quiz_attempts a ON a.lesson_version_id=v.id AND a.enrollment_id=$2 WHERE v.id=$1")
+            .bind(l.lesson_version_id)
+            .bind(s.enrollment_id)
+            .fetch_optional(&mut *self.tx)
+            .await.map_err(failure)?.ok_or(AppError::NotFound)?;
+        let payload: Option<serde_json::Value> = row.try_get("quiz_payload").map_err(failure)?;
+        let payload = payload.ok_or(AppError::Internal)?;
+        let question = payload
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or(AppError::Internal)?
+            .to_owned();
+        let options = payload
+            .get("options")
+            .and_then(|v| v.as_array())
+            .ok_or(AppError::Internal)?
+            .iter()
+            .map(|option| {
+                Ok(LessonQuizOptionView {
+                    id: option
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|v| Uuid::parse_str(v).ok())
+                        .ok_or(AppError::Internal)?,
+                    text: option
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .ok_or(AppError::Internal)?
+                        .to_owned(),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        Ok(LessonQuizView {
+            lesson_id: l.lesson_id,
+            lesson_version_id: l.lesson_version_id,
+            question,
+            options,
+            first_answer_option_id: row.try_get("first_option_id").map_err(failure)?,
+            attempt_count: row
+                .try_get::<Option<i32>, _>("attempt_count")
+                .map_err(failure)?
+                .unwrap_or(0),
+            revision: row
+                .try_get::<Option<i64>, _>("revision")
+                .map_err(failure)?
+                .unwrap_or(0),
+            mastered: row
+                .try_get::<Option<bool>, _>("mastered")
+                .map_err(failure)?
+                .unwrap_or(false),
+        })
+    }
+    async fn lesson_quiz_content(&mut self, version: Uuid) -> AppResult<LessonQuizDraft> {
+        let payload: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT quiz_payload FROM learning_lesson_versions WHERE id=$1")
+                .bind(version)
+                .fetch_optional(&mut *self.tx)
+                .await
+                .map_err(failure)?
+                .ok_or(AppError::NotFound)?;
+        serde_json::from_value(payload.ok_or(AppError::Internal)?).map_err(|_| AppError::Internal)
+    }
+    async fn record_lesson_quiz_answer(
+        &mut self,
+        s: StudentScope,
+        version: Uuid,
+        option: Uuid,
+        expected: i64,
+        correct: bool,
+    ) -> AppResult<LessonQuizAnswerState> {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO learning_lesson_quiz_attempts(id,enrollment_id,lesson_version_id) VALUES($1,$2,$3) ON CONFLICT(enrollment_id,lesson_version_id) DO NOTHING")
+            .bind(id).bind(s.enrollment_id).bind(version).execute(&mut *self.tx).await.map_err(failure)?;
+        let row = sqlx::query("SELECT id,first_option_id,attempt_count,revision,mastered FROM learning_lesson_quiz_attempts WHERE enrollment_id=$1 AND lesson_version_id=$2 FOR UPDATE")
+            .bind(s.enrollment_id).bind(version).fetch_one(&mut *self.tx).await.map_err(failure)?;
+        let attempt_id: Uuid = row.try_get("id").map_err(failure)?;
+        let current_revision: i64 = row.try_get("revision").map_err(failure)?;
+        let count: i32 = row.try_get("attempt_count").map_err(failure)?;
+        let mastered: bool = row.try_get("mastered").map_err(failure)?;
+        if mastered {
+            return Err(AppError::Conflict("LESSON_QUIZ_ALREADY_MASTERED"));
+        }
+        if current_revision != expected {
+            return Err(AppError::Conflict("REVISION_CONFLICT"));
+        }
+        let revision = current_revision.checked_add(1).ok_or(AppError::Internal)?;
+        let count = count.checked_add(1).ok_or(AppError::Internal)?;
+        sqlx::query("INSERT INTO learning_lesson_quiz_answers(attempt_id,revision,option_id,is_correct) VALUES($1,$2,$3,$4)")
+            .bind(attempt_id).bind(revision).bind(option).bind(correct).execute(&mut *self.tx).await.map_err(failure)?;
+        let row = sqlx::query("UPDATE learning_lesson_quiz_attempts SET first_option_id=COALESCE(first_option_id,$2),attempt_count=$3,revision=$4,mastered=$5,first_answered_at=COALESCE(first_answered_at,now()),mastered_at=CASE WHEN $5 THEN COALESCE(mastered_at,now()) ELSE NULL END WHERE id=$1 RETURNING first_option_id,attempt_count,revision,mastered")
+            .bind(attempt_id).bind(option).bind(count).bind(revision).bind(correct).fetch_one(&mut *self.tx).await.map_err(failure)?;
+        Ok(LessonQuizAnswerState {
+            first_answer_option_id: row.try_get("first_option_id").map_err(failure)?,
+            attempt_count: row.try_get("attempt_count").map_err(failure)?,
+            revision: row.try_get("revision").map_err(failure)?,
+            mastered: row.try_get("mastered").map_err(failure)?,
+        })
+    }
     async fn open_lesson(
         &mut self,
         s: StudentScope,
@@ -183,7 +280,7 @@ impl LearningRepository for PgStudentTransaction {
         Ok(())
     }
     async fn complete_lesson(&mut self, s: StudentScope, version: Uuid) -> AppResult<()> {
-        sqlx::query("UPDATE learning_lesson_progress SET completed_at=COALESCE(completed_at,GREATEST(clock_timestamp(),opened_at)) WHERE enrollment_id=$1 AND lesson_version_id=$2").bind(s.enrollment_id).bind(version).execute(&mut *self.tx).await.map_err(failure)?;
+        sqlx::query("UPDATE learning_lesson_progress SET reading_completed_at=COALESCE(reading_completed_at,GREATEST(clock_timestamp(),opened_at)) WHERE enrollment_id=$1 AND lesson_version_id=$2").bind(s.enrollment_id).bind(version).execute(&mut *self.tx).await.map_err(failure)?;
         Ok(())
     }
     async fn complete_enrollment(&mut self, s: StudentScope) -> AppResult<()> {

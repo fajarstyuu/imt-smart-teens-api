@@ -15,7 +15,7 @@ use uuid::Uuid;
 // An active admin actor is required before every count/order/limit; no school grants.
 fn filtered<'a>(admin: Uuid, f: &'a Filters) -> QueryBuilder<'a, Postgres> {
     let mut b = QueryBuilder::new(
-        "WITH scoped AS (SELECT e.*,s.display_name AS student_name,s.created_at AS student_created_at,CASE WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='pre_test' AND a.status='submitted') THEN 'pre_test' WHEN NOT EXISTS(SELECT 1 FROM learning_path_items i WHERE i.path_version_id=e.path_version_id) OR EXISTS(SELECT 1 FROM learning_path_items i LEFT JOIN learning_lesson_progress p ON p.enrollment_id=e.id AND p.lesson_version_id=i.lesson_version_id WHERE i.path_version_id=e.path_version_id AND p.completed_at IS NULL) THEN 'lessons' WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='quiz' AND a.status='submitted') THEN 'quiz' WHEN NOT EXISTS(SELECT 1 FROM anthropometry_measurements m WHERE m.enrollment_id=e.id) THEN 'calculator' WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='post_test' AND a.status='submitted') THEN 'post_test' ELSE 'completed' END AS stage,(SELECT max(a.submitted_at) FROM assessment_attempts a WHERE a.enrollment_id=e.id) AS latest_submitted_at,(SELECT a.score_percent::integer FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='pre_test' AND a.status='submitted' ORDER BY a.submitted_at DESC,a.id DESC LIMIT 1) AS pre_test_score,(SELECT a.score_percent::integer FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='post_test' AND a.status='submitted' ORDER BY a.submitted_at DESC,a.id DESC LIMIT 1) AS post_test_score,GREATEST(e.created_at,e.completed_at,(SELECT max(a.submitted_at) FROM assessment_attempts a WHERE a.enrollment_id=e.id),(SELECT max(a.saved_at) FROM assessment_answers a JOIN assessment_attempts t ON t.id=a.attempt_id WHERE t.enrollment_id=e.id),(SELECT max(GREATEST(p.opened_at,p.completed_at)) FROM learning_lesson_progress p WHERE p.enrollment_id=e.id),(SELECT max(m.created_at) FROM anthropometry_measurements m WHERE m.enrollment_id=e.id)) AS latest_activity_at FROM learning_enrollments e JOIN identity_students s ON s.id=e.student_id WHERE EXISTS(SELECT 1 FROM identity_admins WHERE id=",
+        "WITH scoped AS (SELECT e.*,s.display_name AS student_name,s.created_at AS student_created_at,CASE WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='pre_test' AND a.status='submitted') THEN 'pre_test' WHEN NOT EXISTS(SELECT 1 FROM learning_path_items i WHERE i.path_version_id=e.path_version_id) OR EXISTS(SELECT 1 FROM learning_path_items i LEFT JOIN learning_lesson_quiz_attempts a ON a.enrollment_id=e.id AND a.lesson_version_id=i.lesson_version_id WHERE i.path_version_id=e.path_version_id AND a.mastered_at IS NULL) THEN 'lessons' WHEN NOT EXISTS(SELECT 1 FROM anthropometry_measurements m WHERE m.enrollment_id=e.id) THEN 'calculator' WHEN NOT EXISTS(SELECT 1 FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='post_test' AND a.status='submitted') THEN 'post_test' ELSE 'completed' END AS stage,(SELECT max(a.submitted_at) FROM assessment_attempts a WHERE a.enrollment_id=e.id) AS latest_submitted_at,(SELECT a.score_percent::integer FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='pre_test' AND a.status='submitted' ORDER BY a.submitted_at DESC,a.id DESC LIMIT 1) AS pre_test_score,(SELECT a.score_percent::integer FROM assessment_attempts a WHERE a.enrollment_id=e.id AND a.assessment_type='post_test' AND a.status='submitted' ORDER BY a.submitted_at DESC,a.id DESC LIMIT 1) AS post_test_score,GREATEST(e.created_at,e.completed_at,(SELECT max(a.submitted_at) FROM assessment_attempts a WHERE a.enrollment_id=e.id),(SELECT max(a.saved_at) FROM assessment_answers a JOIN assessment_attempts t ON t.id=a.attempt_id WHERE t.enrollment_id=e.id),(SELECT max(GREATEST(p.opened_at,p.completed_at)) FROM learning_lesson_progress p WHERE p.enrollment_id=e.id),(SELECT max(m.created_at) FROM anthropometry_measurements m WHERE m.enrollment_id=e.id)) AS latest_activity_at FROM learning_enrollments e JOIN identity_students s ON s.id=e.student_id WHERE EXISTS(SELECT 1 FROM identity_admins WHERE id=",
     );
     b.push_bind(admin).push(" AND active)");
     if let Some(q) = &f.q {
@@ -144,7 +144,7 @@ pub(super) async fn results(
             score_percent: r.try_get("score").map_err(failure)?,
         });
     }
-    let rows=sqlx::query("SELECT v.lesson_id,v.id AS lesson_version_id,v.title,i.position,p.opened_at,p.completed_at FROM learning_path_items i JOIN learning_lesson_versions v ON v.id=i.lesson_version_id LEFT JOIN learning_lesson_progress p ON p.lesson_version_id=v.id AND p.enrollment_id=$1 WHERE i.path_version_id=$2 ORDER BY i.position,v.id").bind(eid).bind(s.enrollment.path_version_id).fetch_all(&mut *tx).await.map_err(failure)?;
+    let rows=sqlx::query("SELECT v.lesson_id,v.id AS lesson_version_id,v.title,i.position,p.opened_at,p.reading_completed_at,a.mastered_at AS completed_at FROM learning_path_items i JOIN learning_lesson_versions v ON v.id=i.lesson_version_id LEFT JOIN learning_lesson_progress p ON p.lesson_version_id=v.id AND p.enrollment_id=$1 LEFT JOIN learning_lesson_quiz_attempts a ON a.lesson_version_id=v.id AND a.enrollment_id=$1 WHERE i.path_version_id=$2 ORDER BY i.position,v.id").bind(eid).bind(s.enrollment.path_version_id).fetch_all(&mut *tx).await.map_err(failure)?;
     let mut lessons = vec![];
     for r in rows {
         lessons.push(Lesson {
@@ -153,7 +153,71 @@ pub(super) async fn results(
             title: r.try_get("title").map_err(failure)?,
             position: r.try_get("position").map_err(failure)?,
             opened_at: r.try_get("opened_at").map_err(failure)?,
+            reading_completed_at: r.try_get("reading_completed_at").map_err(failure)?,
             completed_at: r.try_get("completed_at").map_err(failure)?,
+        });
+    }
+    let rows = sqlx::query("SELECT v.lesson_id,v.id AS lesson_version_id,v.title,v.quiz_payload,a.first_option_id,a.attempt_count,a.mastered FROM learning_path_items i JOIN learning_lesson_versions v ON v.id=i.lesson_version_id LEFT JOIN learning_lesson_quiz_attempts a ON a.enrollment_id=$1 AND a.lesson_version_id=v.id WHERE i.path_version_id=$2 ORDER BY i.position,v.id")
+        .bind(eid).bind(s.enrollment.path_version_id).fetch_all(&mut *tx).await.map_err(failure)?;
+    let mut lesson_quizzes = Vec::new();
+    for r in rows {
+        let Some(payload) = r
+            .try_get::<Option<serde_json::Value>, _>("quiz_payload")
+            .map_err(failure)?
+        else {
+            continue;
+        };
+        let question = payload
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or(AppError::Internal)?
+            .to_owned();
+        let raw_options = payload
+            .get("options")
+            .and_then(|v| v.as_array())
+            .ok_or(AppError::Internal)?;
+        let options = raw_options
+            .iter()
+            .map(|o| {
+                Ok(ReportOption {
+                    id: o
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|v| Uuid::parse_str(v).ok())
+                        .ok_or(AppError::Internal)?,
+                    text: o
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .ok_or(AppError::Internal)?
+                        .to_owned(),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        let first_id: Option<Uuid> = r.try_get("first_option_id").map_err(failure)?;
+        let first_answer = first_id.and_then(|id| options.iter().find(|o| o.id == id).cloned());
+        let attempt_count: i32 = r
+            .try_get::<Option<i32>, _>("attempt_count")
+            .map_err(failure)?
+            .unwrap_or(0);
+        let mastered: bool = r
+            .try_get::<Option<bool>, _>("mastered")
+            .map_err(failure)?
+            .unwrap_or(false);
+        lesson_quizzes.push(LessonQuizReport {
+            lesson_id: r.try_get("lesson_id").map_err(failure)?,
+            lesson_version_id: r.try_get("lesson_version_id").map_err(failure)?,
+            lesson_title: r.try_get("title").map_err(failure)?,
+            question,
+            options,
+            first_answer,
+            attempt_count,
+            status: if mastered {
+                "mastered"
+            } else if attempt_count == 0 {
+                "not_started"
+            } else {
+                "retry_required"
+            },
         });
     }
     let rows=sqlx::query("SELECT id,weight_kg::text AS weight,height_cm::text AS height,bmi::text AS bmi,calculation_rule_version,created_at FROM anthropometry_measurements WHERE enrollment_id=$1 ORDER BY created_at DESC,id DESC").bind(eid).fetch_all(&mut *tx).await.map_err(failure)?;
@@ -176,6 +240,7 @@ pub(super) async fn results(
         summary: s,
         attempts,
         lessons,
+        lesson_quizzes,
         measurements,
     })
 }

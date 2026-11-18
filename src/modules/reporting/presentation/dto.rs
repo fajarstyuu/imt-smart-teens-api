@@ -47,7 +47,19 @@ pub struct StudentResultsDto {
     latest_submitted_at: Option<DateTime<Utc>>,
     attempts: Vec<AttemptSummaryDto>,
     lessons: Vec<LessonDto>,
+    lesson_quizzes: Vec<LessonQuizReportDto>,
     measurements: Vec<MeasurementDto>,
+}
+#[derive(Serialize)]
+pub struct LessonQuizReportDto {
+    lesson_id: Uuid,
+    lesson_version_id: Uuid,
+    lesson_title: String,
+    question: String,
+    options: Vec<ReportOptionDto>,
+    first_answer: Option<ReportOptionDto>,
+    attempt_count: i32,
+    status: &'static str,
 }
 #[derive(Serialize)]
 pub struct ReportOptionDto {
@@ -135,6 +147,20 @@ pub fn results_dto(r: StudentResults) -> AppResult<StudentResultsDto> {
             .map(attempt_dto)
             .collect::<AppResult<_>>()?,
         lessons: r.lessons.into_iter().map(Into::into).collect(),
+        lesson_quizzes: r
+            .lesson_quizzes
+            .into_iter()
+            .map(|quiz| LessonQuizReportDto {
+                lesson_id: quiz.lesson_id,
+                lesson_version_id: quiz.lesson_version_id,
+                lesson_title: quiz.lesson_title,
+                question: quiz.question,
+                options: quiz.options.into_iter().map(option_dto).collect(),
+                first_answer: quiz.first_answer.map(option_dto),
+                attempt_count: quiz.attempt_count,
+                status: quiz.status,
+            })
+            .collect(),
         measurements: r
             .measurements
             .into_iter()

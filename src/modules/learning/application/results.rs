@@ -20,7 +20,39 @@ pub struct OpenedLesson {
 #[derive(Clone)]
 pub struct CompletedLesson {
     pub lesson_id: Uuid,
-    pub completed_at: Option<DateTime<Utc>>,
+    pub reading_completed_at: Option<DateTime<Utc>>,
+    pub progress: Progress,
+}
+#[derive(Clone)]
+pub struct LessonQuizOptionView {
+    pub id: Uuid,
+    pub text: String,
+}
+#[derive(Clone)]
+pub struct LessonQuizView {
+    pub lesson_id: Uuid,
+    pub lesson_version_id: Uuid,
+    pub question: String,
+    pub options: Vec<LessonQuizOptionView>,
+    pub first_answer_option_id: Option<Uuid>,
+    pub attempt_count: i32,
+    pub revision: i64,
+    pub mastered: bool,
+}
+#[derive(Clone)]
+pub struct LessonQuizAnswerState {
+    pub first_answer_option_id: Uuid,
+    pub attempt_count: i32,
+    pub revision: i64,
+    pub mastered: bool,
+}
+#[derive(Clone)]
+pub struct LessonQuizAnswerResult {
+    pub lesson_id: Uuid,
+    pub lesson_version_id: Uuid,
+    pub selected_option_id: Uuid,
+    pub correct: bool,
+    pub state: LessonQuizAnswerState,
     pub progress: Progress,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,4 +118,5 @@ pub enum OperationResult {
     Attempt(AttemptCreation),
     Submission(Submission),
     Measurement(MeasurementCreation),
+    LessonQuizAnswer(LessonQuizAnswerResult),
 }

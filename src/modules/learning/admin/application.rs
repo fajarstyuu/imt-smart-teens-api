@@ -75,7 +75,7 @@ pub struct PathEditor {
     pub revision: i64,
     pub lesson_ids: Vec<Uuid>,
     pub paired_bank_id: Uuid,
-    pub quiz_bank_id: Uuid,
+    pub quiz_bank_id: Option<Uuid>,
     pub versions: Vec<Version>,
     pub published: Option<PathManifest>,
 }
@@ -84,7 +84,7 @@ pub struct PathManifest {
     pub id: Uuid,
     pub version: i32,
     pub paired_bank_version_id: Uuid,
-    pub quiz_bank_version_id: Uuid,
+    pub quiz_bank_version_id: Option<Uuid>,
     pub lessons: Vec<(Uuid, Uuid, i32)>,
 }
 /// The adapter owns one transaction; path is always locked before lesson roots.

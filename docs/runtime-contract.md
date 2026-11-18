@@ -26,15 +26,16 @@ Enrollment = {
 }
 LessonMetadata = {
   lesson_id, lesson_version_id, title, position,
-  opened_at: timestamp|null, completed_at: timestamp|null
+  opened_at: timestamp|null, reading_completed_at: timestamp|null,
+  completed_at: timestamp|null  // lesson quiz mastered, not just read
 }
 Progress = {
   enrollment_id, path_version_id,
-  current_stage: pre_test|lessons|quiz|calculator|post_test|completed,
+  current_stage: pre_test|lessons|calculator|post_test|completed,
   stages: [{id: same stage enum, status: locked|in_progress|completed,
             locked_reason: "LEARNING_PREREQUISITE_NOT_MET"|null}],
   lessons: [LessonMetadata + {status: locked|not_started|in_progress|completed}],
-  active_attempt_ids: {pre_test?: uuid, quiz?: uuid, post_test?: uuid},
+  active_attempt_ids: {pre_test?: uuid, post_test?: uuid},
   latest_measurement_id: uuid|null
 }
 Answer = {
@@ -269,7 +270,7 @@ HTTP_HOST=127.0.0.1 HTTP_PORT=4180 APP_ENV=development cargo run --locked -- ser
 
 The placeholder file path is not a committed file. It must supply the intended development `DATABASE_URL`, separate DDL `MIGRATION_DATABASE_URL`, private `CSRF_SIGNING_KEY` (at least32 bytes), and allowlisted frontend origin (local frontend port5173). Use insecure session cookies only on loopback development HTTP; production still requires secure settings. No migrations run automatically during `serve` or config initialization. Do not point test/init commands at an application/production database by accident. Task3 verification only used SQLx-created isolated databases; the existing application database was not migrated or modified.
 
-`init-content-config` is an explicit private CLI command taking **no arguments**. Its application entry point is `learning::admin::application::LessonCms::initialize_development(environment: &str) -> AppResult<()>`, backed by `LessonStore::initialize_empty`. It only accepts `development`, rejects production/test/unknown modes, serializes concurrent initializers with an advisory transaction lock, inserts missing empty paired/quiz roots and one empty configured path draft, and preserves all existing IDs/revisions/drafts/publications. Multiple existing configured paths fail409 rather than guessing one. It creates **no** schools, questions, lessons, publications, students, sessions, sample credentials or answer content. A missing configured path/bank pair is409 `CONTENT_CONFIGURATION_REQUIRED` from the relevant editor facade; GET never initializes or publishes. Content must then be authored/published deliberately through authenticated admin endpoints.
+`init-content-config` is an explicit private CLI command taking **no arguments**. Its application entry point is `learning::admin::application::LessonCms::initialize_development(environment: &str) -> AppResult<()>`, backed by `LessonStore::initialize_empty`. It only accepts `development`, rejects production/test/unknown modes, serializes concurrent initializers with an advisory transaction lock, inserts a missing empty paired-assessment root and one empty configured path draft with nullable legacy global-quiz bank reference, and preserves all existing IDs/revisions/drafts/publications. Multiple existing configured paths fail409 rather than guessing one. It creates **no** schools, questions, lessons, publications, students, sessions, sample credentials or answer content. A missing configured path/bank pair is409 `CONTENT_CONFIGURATION_REQUIRED` from the relevant editor facade; GET never initializes or publishes. Content must then be authored/published deliberately through authenticated admin endpoints.
 
 The existing private `provision-admin` command remains separate. Supply ADMIN_EMAIL/ADMIN_NAME and the password privately via the existing environment/pipe convention, never command arguments; set ADMIN_CAN_MANAGE_CONTENT and/or ADMIN_CAN_MANAGE_SCHOOLS explicitly as needed. Provisioning creates no reporting grants. Reporting grants require a separate authorized operator assignment to existing school IDs; there is no public permission/grant endpoint. No default admin account or teaching seed command was added.
 
@@ -308,6 +309,16 @@ LessonQuizDraft = {
 
 This is an admin-only DTO. It is optional while drafting; provided option IDs must be distinct/non-nil, and any present key must identify one of them. Publishing requires nonblank question and both option texts and exactly one key. Every newly published lesson version stores `quiz_payload` JSONB in the same transaction as its sections and audit; the forward migration leaves older version rows nullable. This change has real PostgreSQL coverage through existing CMS publication tests and unit/domain checks in `tests/lesson_quiz.rs`.
 
-Private operational addition: `imt-smart-teens-backend init-empty-content` runs the existing serialized structural initializer in any configured environment, including production. It creates only missing empty paired/quiz bank roots and a single empty path draft. It is not called on serve; `init-content-config` keeps its development-only guard. The synthetic SQLx test uses an APP_ENV=production subprocess, confirms repeat idempotence, no lesson/version creation, and unchanged admin password hash. This command is not to be run against live production in this implementation.
+Private operational addition: `imt-smart-teens-backend init-empty-content` runs the serialized structural initializer in any configured environment, including production. It creates only a missing empty paired assessment root and one path draft whose legacy quiz-bank reference is null. It is not called on serve; `init-content-config` keeps its development-only guard. The synthetic SQLx test uses an APP_ENV=production subprocess, confirms repeat idempotence, no lesson/version creation, and unchanged admin password hash. This command is not to be run against live production in this implementation.
 
-This is an implementation checkpoint, not the final runtime contract: student quiz reads/answers, mastery prerequisites, measurements, and lesson-quiz result details remain pending; do not infer those DTOs from the legacy quiz-attempt endpoints above.
+### Frozen lesson-linked student contract (2026-11-18)
+
+The global `quiz` assessment-attempt stage is retired for new progress. Legacy global quiz attempts/banks remain in storage for historical compatibility, but `POST /api/v1/student/attempts` with `assessment_type:"quiz"` is rejected by the domain prerequisite. New enrollments pin exactly one shared paired pre/post snapshot. `pre_test`/`post_test` types, answer cardinality and paired snapshot identity remain unchanged. Calculator and post-test are gated on mastery of every pinned lesson quiz; POST attempts, direct measurement calls and old quiz endpoints cannot bypass this server-side gate.
+
+`GET /api/v1/student/lessons/{lesson_id}/quiz` returns `{lesson_id,lesson_version_id,question,options:[{id,text},{id,text}],first_answer_option_id,attempt_count,revision,mastered}`. It exposes no answer key. It requires submitted pre-test, prior lesson mastery and the target lesson's `reading_completed_at`; lesson reads/required-section completion are separate from quiz mastery. A lesson becomes completed/unlocks the next lesson only when its immutable version's quiz is answered correctly.
+
+`POST /api/v1/student/lessons/{lesson_id}/quiz/answers` requires the normal student cookie, cookie-bound CSRF token, allowlisted Origin, `Idempotency-Key`, and `{option_id,expected_revision}`. One selected option is accepted per request. It returns `{lesson_id,lesson_version_id,selected_option_id,correct,feedback,first_answer_option_id,attempt_count,revision,mastered,progress}`. Wrong answers are committed and count; their `feedback` is exactly `jawablah dengan benar untuk melanjutkan materi selanjutnya`. Retrying is unlimited. The first option is immutable. Each accepted selection advances revision and gets a history row; repeated same-key/same-payload requests replay without incrementing. Stale revisions, foreign options, and attempts after mastery are rejected. Attempt ownership is `(enrollment_id,lesson_version_id)`, so future publications cannot retarget an existing enrollment.
+
+`LessonMetadata` distinguishes `reading_completed_at` from quiz-mastered `completed_at`. Lesson quiz history is exposed only in `GET /api/v1/admin/students/{student}/results` as `lesson_quizzes:[{lesson_id,lesson_version_id,lesson_title,question,options,first_answer,attempt_count,status}]`, where status is `not_started|retry_required|mastered`; no correct key is included. The main student list has no new quiz columns and no per-lesson history endpoint is added.
+
+CMS `GET /api/v1/admin/question-banks` now lists only the paired pre/post bank. Reviewed path publication validates/publishes that paired bank plus complete lesson quizzes; a shared global quiz bank is neither listed nor required. `PathEditor.quiz_bank_id` and historical manifest `quiz_bank_version_id` are nullable legacy fields. `imt-smart-teens-backend init-empty-content` is the explicit production-safe initialization command; this implementation did not run it live.

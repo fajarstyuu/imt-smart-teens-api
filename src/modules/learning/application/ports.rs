@@ -1,11 +1,13 @@
 //! Repository contracts obtained inside one caller-owned transaction scope.
 //! Adapters only map/load/write; prerequisite, scoring and idempotency decisions stay in services.
-use super::results::OperationResult;
+use super::results::{LessonQuizAnswerState, LessonQuizView, OperationResult};
 pub use crate::modules::learning::domain::PublishedPath;
 use crate::{
     modules::{
-        anthropometry::domain::Measurement, assessment::domain::*,
-        identity::application::NewSession, learning::domain::*,
+        anthropometry::domain::Measurement,
+        assessment::{domain::*, lesson_quiz::LessonQuizDraft},
+        identity::application::NewSession,
+        learning::domain::*,
     },
     shared::error::AppResult,
 };
@@ -41,6 +43,20 @@ pub trait LearningRepository: Send {
     /// Locks enrollment BEFORE any attempt for transitions. All queries validate both owner IDs.
     async fn journey(&mut self, scope: StudentScope) -> AppResult<Journey>;
     async fn lesson_view(&mut self, scope: StudentScope, lesson: &Lesson) -> AppResult<LessonView>;
+    async fn lesson_quiz_view(
+        &mut self,
+        scope: StudentScope,
+        lesson: &Lesson,
+    ) -> AppResult<LessonQuizView>;
+    async fn lesson_quiz_content(&mut self, lesson_version_id: Uuid) -> AppResult<LessonQuizDraft>;
+    async fn record_lesson_quiz_answer(
+        &mut self,
+        scope: StudentScope,
+        lesson_version_id: Uuid,
+        option_id: Uuid,
+        expected_revision: i64,
+        correct: bool,
+    ) -> AppResult<LessonQuizAnswerState>;
     async fn open_lesson(
         &mut self,
         scope: StudentScope,

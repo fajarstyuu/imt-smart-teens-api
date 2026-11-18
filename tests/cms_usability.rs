@@ -23,6 +23,7 @@ async fn setup(pool: &PgPool) -> (axum::Router, String, String, Value) {
         &t,
     )
     .await;
+    assert!(bs["data"].is_array(), "bank list response: {bs}");
     for b in bs["data"].as_array().unwrap() {
         let a = Uuid::new_v4();
         let z = Uuid::new_v4();
@@ -58,13 +59,13 @@ async fn release_publishes_drafts_once_and_preserves_existing_enrollment(pool: P
     let (app, c, t, cmd) = setup(&pool).await;
     let (s, p, _) = request(&app, "POST", RELEASE, cmd.clone(), &c, &t).await;
     assert_eq!(s, 200, "{p}");
-    assert_eq!(versions(&pool).await, 6);
+    assert_eq!(versions(&pool).await, 4);
     let old = p["data"]["published"]["id"].clone();
     let school = cms::school(&pool, "Synthetic release school").await;
     let (_, _, profile) = student::enroll(&app, school).await;
     assert_eq!(profile["enrollment"]["path_version_id"], old);
     assert_eq!(request(&app, "POST", RELEASE, cmd, &c, &t).await.0, 409);
-    assert_eq!(versions(&pool).await, 6);
+    assert_eq!(versions(&pool).await, 4);
 }
 #[sqlx::test(migrations = "./migrations")]
 async fn stale_review_or_missing_membership_never_creates_any_versions(pool: PgPool) {
@@ -74,9 +75,9 @@ async fn stale_review_or_missing_membership_never_creates_any_versions(pool: PgP
         match kind {
             "path" => stale["expected_revision"] = json!(99),
             "lesson" => stale["lessons"][0]["expected_revision"] = json!(99),
-            "bank" => stale["banks"][1]["expected_revision"] = json!(99),
+            "bank" => stale["banks"][0]["expected_revision"] = json!(99),
             "missing" => stale["lessons"] = json!([]),
-            _ => stale["banks"][1] = stale["banks"][0].clone(),
+            _ => stale["banks"] = json!([]),
         }
         let (s, v, _) = request(&app, "POST", RELEASE, stale, &c, &t).await;
         assert!(s == 409 || s == 422, "{kind}: {s} {v}");
@@ -84,9 +85,9 @@ async fn stale_review_or_missing_membership_never_creates_any_versions(pool: PgP
     }
 }
 #[sqlx::test(migrations = "./migrations")]
-async fn invalid_bank_rolls_back_other_bank_and_lesson_publications(pool: PgPool) {
+async fn invalid_bank_rolls_back_lesson_publication(pool: PgPool) {
     let (app, c, t, mut cmd) = setup(&pool).await;
-    let id = cmd["banks"][1]["id"]
+    let id = cmd["banks"][0]["id"]
         .as_str()
         .unwrap()
         .parse::<Uuid>()
@@ -96,7 +97,7 @@ async fn invalid_bank_rolls_back_other_bank_and_lesson_publications(pool: PgPool
         .execute(&pool)
         .await
         .unwrap();
-    cmd["banks"][1]["expected_revision"] = json!(2);
+    cmd["banks"][0]["expected_revision"] = json!(2);
     let (s, v, _) = request(&app, "POST", RELEASE, cmd, &c, &t).await;
     assert_eq!(s, 422, "{v}");
     assert_eq!(versions(&pool).await, 0);
@@ -142,7 +143,7 @@ async fn concurrent_release_exactly_one_wins_and_csrf_admin_are_required(pool: P
     let mut statuses = [a.0, b.0];
     statuses.sort();
     assert_eq!(statuses, [200, 409]);
-    assert_eq!(versions(&pool).await, 6);
+    assert_eq!(versions(&pool).await, 4);
 }
 #[sqlx::test(migrations = "./migrations")]
 async fn student_name_search_is_bounded_and_missing_scores_stay_null(pool: PgPool) {

@@ -17,7 +17,6 @@ pub fn stage(s: Stage) -> &'static str {
     match s {
         Stage::PreTest => "pre_test",
         Stage::Lessons => "lessons",
-        Stage::Quiz => "quiz",
         Stage::Calculator => "calculator",
         Stage::PostTest => "post_test",
         Stage::Completed => "completed",
@@ -87,6 +86,7 @@ pub struct LessonDto {
     title: String,
     position: i32,
     opened_at: Option<DateTime<Utc>>,
+    reading_completed_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
 }
 impl From<Lesson> for LessonDto {
@@ -97,6 +97,7 @@ impl From<Lesson> for LessonDto {
             title: l.title,
             position: l.position,
             opened_at: l.opened_at,
+            reading_completed_at: l.reading_completed_at,
             completed_at: l.completed_at,
         }
     }
@@ -194,6 +195,73 @@ impl From<LessonView> for LessonViewDto {
     }
 }
 #[derive(Serialize)]
+pub struct LessonQuizOptionDto {
+    id: Uuid,
+    text: String,
+}
+#[derive(Serialize)]
+pub struct LessonQuizViewDto {
+    lesson_id: Uuid,
+    lesson_version_id: Uuid,
+    question: String,
+    options: Vec<LessonQuizOptionDto>,
+    first_answer_option_id: Option<Uuid>,
+    attempt_count: i32,
+    revision: i64,
+    mastered: bool,
+}
+impl From<LessonQuizView> for LessonQuizViewDto {
+    fn from(v: LessonQuizView) -> Self {
+        Self {
+            lesson_id: v.lesson_id,
+            lesson_version_id: v.lesson_version_id,
+            question: v.question,
+            options: v
+                .options
+                .into_iter()
+                .map(|o| LessonQuizOptionDto {
+                    id: o.id,
+                    text: o.text,
+                })
+                .collect(),
+            first_answer_option_id: v.first_answer_option_id,
+            attempt_count: v.attempt_count,
+            revision: v.revision,
+            mastered: v.mastered,
+        }
+    }
+}
+#[derive(Serialize)]
+pub struct LessonQuizAnswerDto {
+    lesson_id: Uuid,
+    lesson_version_id: Uuid,
+    selected_option_id: Uuid,
+    correct: bool,
+    feedback: Option<&'static str>,
+    first_answer_option_id: Uuid,
+    attempt_count: i32,
+    revision: i64,
+    mastered: bool,
+    progress: ProgressDto,
+}
+impl From<LessonQuizAnswerResult> for LessonQuizAnswerDto {
+    fn from(v: LessonQuizAnswerResult) -> Self {
+        Self {
+            lesson_id: v.lesson_id,
+            lesson_version_id: v.lesson_version_id,
+            selected_option_id: v.selected_option_id,
+            correct: v.correct,
+            feedback: (!v.correct)
+                .then_some("jawablah dengan benar untuk melanjutkan materi selanjutnya"),
+            first_answer_option_id: v.state.first_answer_option_id,
+            attempt_count: v.state.attempt_count,
+            revision: v.state.revision,
+            mastered: v.state.mastered,
+            progress: v.progress.into(),
+        }
+    }
+}
+#[derive(Serialize)]
 pub struct OpenedDto {
     lesson_id: Uuid,
     opened_at: Option<DateTime<Utc>>,
@@ -218,7 +286,7 @@ impl From<CompletedLesson> for CompletedDto {
     fn from(v: CompletedLesson) -> Self {
         Self {
             lesson_id: v.lesson_id,
-            completed_at: v.completed_at,
+            completed_at: v.reading_completed_at,
             progress: v.progress.into(),
         }
     }

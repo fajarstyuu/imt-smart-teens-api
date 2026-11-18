@@ -129,11 +129,12 @@ fn editable(q: &QuestionEditor, rev: i64) -> AppResult<()> {
 impl BankStore for PgBankCms {
     async fn banks(&self) -> AppResult<Vec<BankEditor>> {
         let mut tx = self.pool.begin().await.map_err(failure)?;
-        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM assessment_banks ORDER BY kind,id")
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(failure)?;
-        if ids.len() != 2 {
+        let ids: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id FROM assessment_banks WHERE kind='paired' ORDER BY id")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(failure)?;
+        if ids.len() != 1 {
             return Err(AppError::Conflict("CONTENT_CONFIGURATION_REQUIRED"));
         }
         let mut out = vec![];

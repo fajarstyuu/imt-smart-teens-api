@@ -12,12 +12,12 @@ use uuid::Uuid;
 pub struct PublishedPath {
     pub id: Uuid,
     pub paired_bank: Uuid,
-    pub quiz_bank: Uuid,
+    pub quiz_bank: Option<Uuid>,
     pub paired_kind: String,
-    pub quiz_kind: String,
+    pub quiz_kind: Option<String>,
     pub lesson_count: i64,
     pub paired_question_count: i64,
-    pub quiz_question_count: i64,
+    pub quiz_question_count: Option<i64>,
     pub paired_weights: Vec<i64>,
     pub quiz_weights: Vec<i64>,
 }
@@ -27,15 +27,7 @@ impl PublishedPath {
         crate::modules::assessment::domain::validate_score_budget(
             self.paired_weights.iter().copied(),
         )?;
-        crate::modules::assessment::domain::validate_score_budget(
-            self.quiz_weights.iter().copied(),
-        )?;
-        if self.lesson_count > 0
-            && self.paired_question_count > 0
-            && self.quiz_question_count > 0
-            && self.paired_kind == "paired"
-            && self.quiz_kind == "quiz"
-        {
+        if self.lesson_count > 0 && self.paired_question_count > 0 && self.paired_kind == "paired" {
             Ok(())
         } else {
             Err(AppError::Conflict("CONTENT_NOT_AVAILABLE"))
@@ -69,6 +61,8 @@ pub struct Lesson {
     pub title: String,
     pub position: i32,
     pub opened_at: Option<DateTime<Utc>>,
+    pub reading_completed_at: Option<DateTime<Utc>>,
+    /// Set only when the pinned lesson quiz is mastered.
     pub completed_at: Option<DateTime<Utc>>,
 }
 #[derive(Clone)]
@@ -91,16 +85,14 @@ pub struct LessonView {
 pub enum Stage {
     PreTest,
     Lessons,
-    Quiz,
     Calculator,
     PostTest,
     Completed,
 }
 impl Stage {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::PreTest,
         Self::Lessons,
-        Self::Quiz,
         Self::Calculator,
         Self::PostTest,
         Self::Completed,
@@ -155,11 +147,9 @@ impl Journey {
     pub fn require_attempt(&self, typ: AssessmentType) -> AppResult<()> {
         let allowed = match typ {
             AssessmentType::PreTest => true,
-            AssessmentType::Quiz => {
-                self.submitted(AssessmentType::PreTest) && self.all_lessons_complete()
-            }
+            AssessmentType::Quiz => false,
             AssessmentType::PostTest => {
-                self.submitted(AssessmentType::Quiz) && self.latest_measurement.is_some()
+                self.all_lessons_complete() && self.latest_measurement.is_some()
             }
         };
         if allowed {
@@ -184,7 +174,7 @@ impl Journey {
         Ok(&self.lessons[index])
     }
     pub fn require_measurement(&self) -> AppResult<()> {
-        if self.submitted(AssessmentType::Quiz) && !self.submitted(AssessmentType::PostTest) {
+        if self.all_lessons_complete() && !self.submitted(AssessmentType::PostTest) {
             Ok(())
         } else {
             Err(AppError::Conflict("LEARNING_PREREQUISITE_NOT_MET"))
@@ -195,8 +185,6 @@ impl Journey {
             Stage::PreTest
         } else if !self.all_lessons_complete() {
             Stage::Lessons
-        } else if !self.submitted(AssessmentType::Quiz) {
-            Stage::Quiz
         } else if self.latest_measurement.is_none() {
             Stage::Calculator
         } else if !self.submitted(AssessmentType::PostTest) {

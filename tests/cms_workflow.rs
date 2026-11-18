@@ -252,12 +252,31 @@ async fn http_cms_publication_student_completion_survives_future_versions_and_ar
         .0,
         200
     );
-    let quiz = student::attempt(&app, &sc, &st, "quiz").await;
-    cms::answer(&app, &sc, &st, &quiz, true).await;
-    assert_eq!(
-        student::submit(&app, &sc, &st, &quiz, "quiz").await["score"],
-        100
-    );
+    let (s, quiz, _) = student::call(
+        &app,
+        "GET",
+        &format!("/api/v1/student/lessons/{lesson}/quiz"),
+        Value::Null,
+        &sc,
+        &st,
+        "",
+    )
+    .await;
+    assert_eq!(s, 200, "{quiz}");
+    assert!(!quiz.to_string().contains("correct_option_id"));
+    let correct = content.lesson["draft"]["quiz"]["correct_option_id"].clone();
+    let (s, answer, _) = student::call(
+        &app,
+        "POST",
+        &format!("/api/v1/student/lessons/{lesson}/quiz/answers"),
+        json!({"option_id":correct,"expected_revision":0}),
+        &sc,
+        &st,
+        "lesson-quiz-answer",
+    )
+    .await;
+    assert_eq!(s, 200, "{answer}");
+    assert_eq!(answer["data"]["correct"], true);
     assert_eq!(
         student::call(
             &app,
@@ -314,13 +333,32 @@ async fn http_cms_publication_student_completion_survives_future_versions_and_ar
     .await;
     assert_eq!(s, 200, "{r}");
     assert_eq!(r["data"]["current_stage"], "completed");
+    assert_eq!(r["data"]["lesson_quizzes"].as_array().unwrap().len(), 1);
+    assert_eq!(r["data"]["lesson_quizzes"][0]["attempt_count"], 1);
+    assert_eq!(r["data"]["lesson_quizzes"][0]["status"], "mastered");
+    assert_eq!(
+        r["data"]["lesson_quizzes"][0]["first_answer"]["text"],
+        "Historical A"
+    );
+    assert!(!r["data"]["lesson_quizzes"].to_string().contains("correct_option_id"));
     assert_eq!(
         r["data"]["enrollment"]["school_name_at_enrollment"],
         "Historical school"
     );
     assert_eq!(r["data"]["lessons"][0]["title"], "Historical lesson");
     assert_eq!(r["data"]["measurements"][0]["bmi_display"], "20.8");
-    assert_eq!(r["data"]["attempts"].as_array().unwrap().len(), 3);
+    assert_eq!(r["data"]["attempts"].as_array().unwrap().len(), 2);
+    let (s, list, _) = request(
+        &app,
+        "GET",
+        "/api/v1/admin/students",
+        json!(null),
+        &c,
+        &t,
+    )
+    .await;
+    assert_eq!(s, 200, "{list}");
+    assert!(!list.to_string().contains("lesson_quizzes"));
     let (s, r, _) = request(
         &app,
         "GET",

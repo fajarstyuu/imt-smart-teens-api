@@ -150,7 +150,7 @@ impl LessonStore for PgLessonCms {
             .execute(&mut *tx)
             .await
             .map_err(failure)?;
-        for kind in ["paired", "quiz"] {
+        for kind in ["paired"] {
             sqlx::query("INSERT INTO assessment_banks(id,kind,state) VALUES($1,$2,'draft') ON CONFLICT(kind) DO NOTHING").bind(Uuid::new_v4()).bind(kind).execute(&mut *tx).await.map_err(failure)?;
         }
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_path_drafts")
@@ -161,7 +161,7 @@ impl LessonStore for PgLessonCms {
             return Err(AppError::Conflict("CONTENT_CONFIGURATION_REQUIRED"));
         }
         if count == 0 {
-            sqlx::query("INSERT INTO learning_path_drafts(id,lesson_ids,paired_bank_id,quiz_bank_id) SELECT $1,'{}',p.id,q.id FROM assessment_banks p,assessment_banks q WHERE p.kind='paired' AND q.kind='quiz'").bind(Uuid::new_v4()).execute(&mut *tx).await.map_err(failure)?;
+            sqlx::query("INSERT INTO learning_path_drafts(id,lesson_ids,paired_bank_id,quiz_bank_id) SELECT $1,'{}',p.id,NULL FROM assessment_banks p WHERE p.kind='paired'").bind(Uuid::new_v4()).execute(&mut *tx).await.map_err(failure)?;
         }
         tx.commit().await.map_err(failure)
     }

@@ -38,7 +38,7 @@ pub struct PathManifestDto {
     id: Uuid,
     version: i32,
     paired_bank_version_id: Uuid,
-    quiz_bank_version_id: Uuid,
+    quiz_bank_version_id: Option<Uuid>,
     lessons: Vec<PathLessonDto>,
 }
 #[derive(Serialize)]
@@ -47,7 +47,7 @@ pub struct PathEditorDto {
     revision: i64,
     lesson_ids: Vec<Uuid>,
     paired_bank_id: Uuid,
-    quiz_bank_id: Uuid,
+    quiz_bank_id: Option<Uuid>,
     versions: Vec<VersionDto>,
     published: Option<PathManifestDto>,
 }
