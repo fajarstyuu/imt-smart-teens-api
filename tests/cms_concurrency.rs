@@ -102,7 +102,7 @@ async fn publication_revalidates_persisted_drafts_order_and_rolls_back_path_audi
             .fetch_one(&pool)
             .await
             .unwrap(),
-        2
+        1
     );
     sqlx::raw_sql("CREATE FUNCTION fail_path_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='path.publish' THEN RAISE EXCEPTION 'synthetic'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_path_audit BEFORE INSERT ON platform_audit_events FOR EACH ROW EXECUTE FUNCTION fail_path_audit()").execute(&pool).await.unwrap();
     // Dirty drafts do not affect previously published data; path can validate old immutable keys.

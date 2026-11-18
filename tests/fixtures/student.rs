@@ -99,10 +99,13 @@ pub async fn publish_future(pool: &PgPool) {
     }
     let path = Uuid::new_v4();
     sqlx::query("INSERT INTO learning_path_versions(id,version,paired_bank_version_id,quiz_bank_version_id) VALUES($1,2,$2,$3)").bind(path).bind(bank_version).bind(quiz).execute(&mut *tx).await.unwrap();
-    let rows:Vec<(Uuid,Uuid,i32)>=sqlx::query_as("SELECT i.lesson_version_id,v.lesson_id,i.position FROM learning_path_items i JOIN learning_lesson_versions v ON v.id=i.lesson_version_id WHERE i.path_version_id=$1 ORDER BY i.position").bind(old_path).fetch_all(&mut *tx).await.unwrap();
-    for (old, lesson, position) in rows {
+    let rows:Vec<(Uuid,Uuid,i32,serde_json::Value)>=sqlx::query_as("SELECT i.lesson_version_id,v.lesson_id,i.position,v.quiz_payload FROM learning_path_items i JOIN learning_lesson_versions v ON v.id=i.lesson_version_id WHERE i.path_version_id=$1 ORDER BY i.position").bind(old_path).fetch_all(&mut *tx).await.unwrap();
+    for (old, lesson, position, _old_quiz) in rows {
         let version = Uuid::new_v4();
-        sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description) VALUES($1,$2,2,'Future synthetic lesson','Future description')").bind(version).bind(lesson).execute(&mut *tx).await.unwrap();
+        let option_a = Uuid::new_v4();
+        let option_b = Uuid::new_v4();
+        let future_quiz = serde_json::json!({"text":"Future synthetic lesson question","options":[{"id":option_a,"text":"Future answer A"},{"id":option_b,"text":"Future answer B"}],"correct_option_id":option_a});
+        sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description,quiz_payload) VALUES($1,$2,2,'Future synthetic lesson','Future description',$3)").bind(version).bind(lesson).bind(future_quiz).execute(&mut *tx).await.unwrap();
         sqlx::query("INSERT INTO learning_sections(id,lesson_version_id,section_key,position,title,body,required) SELECT $1,$2,section_key,position,'Future section','Future body',required FROM learning_sections WHERE lesson_version_id=$3").bind(Uuid::new_v4()).bind(version).bind(old).execute(&mut *tx).await.unwrap();
         sqlx::query("INSERT INTO learning_path_items(path_version_id,lesson_version_id,position) VALUES($1,$2,$3)").bind(path).bind(version).bind(position).execute(&mut *tx).await.unwrap();
     }

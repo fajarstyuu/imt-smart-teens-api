@@ -505,6 +505,7 @@ async fn report_states_pending_clear_graded_historical_versions_and_required_sel
             "current_stage",
             "latest_submitted_at",
             "attempts",
+            "lesson_quizzes",
             "lessons",
             "measurements"
         ]

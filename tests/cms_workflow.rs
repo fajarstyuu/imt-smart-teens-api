@@ -340,7 +340,11 @@ async fn http_cms_publication_student_completion_survives_future_versions_and_ar
         r["data"]["lesson_quizzes"][0]["first_answer"]["text"],
         "Historical A"
     );
-    assert!(!r["data"]["lesson_quizzes"].to_string().contains("correct_option_id"));
+    assert!(
+        !r["data"]["lesson_quizzes"]
+            .to_string()
+            .contains("correct_option_id")
+    );
     assert_eq!(
         r["data"]["enrollment"]["school_name_at_enrollment"],
         "Historical school"
@@ -348,15 +352,7 @@ async fn http_cms_publication_student_completion_survives_future_versions_and_ar
     assert_eq!(r["data"]["lessons"][0]["title"], "Historical lesson");
     assert_eq!(r["data"]["measurements"][0]["bmi_display"], "20.8");
     assert_eq!(r["data"]["attempts"].as_array().unwrap().len(), 2);
-    let (s, list, _) = request(
-        &app,
-        "GET",
-        "/api/v1/admin/students",
-        json!(null),
-        &c,
-        &t,
-    )
-    .await;
+    let (s, list, _) = request(&app, "GET", "/api/v1/admin/students", json!(null), &c, &t).await;
     assert_eq!(s, 200, "{list}");
     assert!(!list.to_string().contains("lesson_quizzes"));
     let (s, r, _) = request(

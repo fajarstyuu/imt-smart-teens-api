@@ -34,7 +34,7 @@ async fn empty_database_gets_full_relational_schema(pool: sqlx::PgPool) {
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name <> '_sqlx_migrations'")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(
-        count, 28,
-        "all 28 business tables must migrate from empty PostgreSQL"
+        count, 30,
+        "all 30 business tables must migrate from empty PostgreSQL"
     );
 }

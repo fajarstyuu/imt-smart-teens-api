@@ -133,6 +133,11 @@ async fn answer_lesson_quiz(
     headers: HeaderMap,
     ApiJson(input): ApiJson<LessonQuizAnswerRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let semantic_payload = serde_json::json!({
+        "lesson_id": id,
+        "option_id": input.option_id,
+        "expected_revision": input.expected_revision,
+    });
     let result = s
         .students
         .answer_lesson_quiz(
@@ -140,7 +145,7 @@ async fn answer_lesson_quiz(
             id,
             input.option_id,
             input.expected_revision,
-            operation(&a, &headers, &input)?,
+            operation(&a, &headers, &semantic_payload)?,
         )
         .await?;
     Ok(Json(json!({"data":LessonQuizAnswerDto::from(result)})))

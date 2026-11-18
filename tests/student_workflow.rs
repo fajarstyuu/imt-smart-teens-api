@@ -357,25 +357,45 @@ async fn full_persisted_student_sequence_and_foreign_ownership(pool: PgPool) {
         )
         .await;
         assert_eq!(s, 200, "{v}");
+        let (s, quiz, _) = call(
+            &app,
+            "GET",
+            &format!("{path}/quiz"),
+            json!(null),
+            &c,
+            &t,
+            "",
+        )
+        .await;
+        assert_eq!(s, 200, "{quiz}");
+        let correct = quiz["data"]["options"][0]["id"].clone();
+        let (s, mastered, _) = call(
+            &app,
+            "POST",
+            &format!("{path}/quiz/answers"),
+            json!({"option_id":correct,"expected_revision":0}),
+            &c,
+            &t,
+            &format!("mastery-{lesson}"),
+        )
+        .await;
+        assert_eq!(s, 200, "{mastered}");
+        assert_eq!(mastered["data"]["mastered"], true);
     }
-    let quiz = attempt(&app, &c, &t, "quiz").await;
-    assert_ne!(quiz["snapshot_id"], pre["snapshot_id"]);
-    answer_all(&app, &c, &t, &quiz, true).await;
-    assert_eq!(
-        submit(&app, &c, &t, &quiz, "quiz-submit").await["score"],
-        100
-    );
-    let (s, _, _) = call(
+    let (s, legacy_quiz, _) = call(
         &app,
         "POST",
         "/api/v1/student/attempts",
-        json!({"assessment_type":"post_test"}),
+        json!({"assessment_type":"quiz"}),
         &c,
         &t,
         "post-locked",
     )
     .await;
-    assert_eq!(s, 409);
+    assert_eq!(
+        s, 409,
+        "legacy global quiz cannot bypass lesson mastery: {legacy_quiz}"
+    );
     for value in [0., -1., 0.00001, 100000000.] {
         let (s, v, _) = call(
             &app,
@@ -1102,20 +1122,32 @@ async fn simultaneous_registration_replay_has_one_identity(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn enrollment_seals_quiz_snapshot_before_quiz_attempt_exists(pool: PgPool) {
-    let (school, _) = content(&pool).await;
+async fn enrollment_pins_its_lesson_quiz_before_any_answer_exists(pool: PgPool) {
+    let (school, lessons) = content(&pool).await;
     let app = app(pool.clone()).await;
     let (_, _, out) = enroll(&app, school).await;
     let enrollment: Uuid = serde_json::from_value(out["enrollment"]["id"].clone()).unwrap();
-    let snapshot: Uuid = sqlx::query_scalar(
-        "SELECT id FROM assessment_snapshots WHERE enrollment_id=$1 AND kind='quiz'",
-    )
-    .bind(enrollment)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let version:Uuid=sqlx::query_scalar("SELECT question_version_id FROM assessment_snapshot_questions WHERE snapshot_id<>$1 LIMIT 1").bind(snapshot).fetch_one(&pool).await.unwrap();
-    assert!(sqlx::query("INSERT INTO assessment_snapshot_questions(id,snapshot_id,question_version_id,position) VALUES($1,$2,$3,99)").bind(Uuid::new_v4()).bind(snapshot).bind(version).execute(&pool).await.is_err(),"quiz snapshot accepted a late question before quiz creation");
+    let pinned: (Uuid, serde_json::Value) = sqlx::query_as("SELECT i.lesson_version_id,v.quiz_payload FROM learning_enrollments e JOIN learning_path_items i ON i.path_version_id=e.path_version_id JOIN learning_lesson_versions v ON v.id=i.lesson_version_id WHERE e.id=$1 AND v.lesson_id=$2")
+        .bind(enrollment).bind(lessons[0]).fetch_one(&pool).await.unwrap();
+    assert!(pinned.1.is_object());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM learning_lesson_quiz_attempts WHERE enrollment_id=$1"
+        )
+        .bind(enrollment)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert!(
+        sqlx::query("UPDATE learning_lesson_versions SET quiz_payload='{}' WHERE id=$1")
+            .bind(pinned.0)
+            .execute(&pool)
+            .await
+            .is_err(),
+        "published lesson quiz payload must remain immutable"
+    );
 }
 #[sqlx::test(migrations = "./migrations")]
 async fn malformed_school_uuid_is_transport_error(pool: PgPool) {
@@ -1192,7 +1224,7 @@ async fn student_rotation_uses_admin_then_student_session_lock_order(pool: PgPoo
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn missing_quiz_manifest_and_unknown_school_leave_no_identity(pool: PgPool) {
+async fn legacy_global_quiz_manifest_is_optional_for_enrollment(pool: PgPool) {
     let (school, _) = content(&pool).await;
     let app = app(pool.clone()).await;
     let (c, t) = csrf(&app).await;
@@ -1239,13 +1271,15 @@ async fn missing_quiz_manifest_and_unknown_school_leave_no_identity(pool: PgPool
         "empty-quiz",
     )
     .await;
-    assert_eq!(s, 409, "{v}");
-    assert_eq!(v["error"]["code"], "CONTENT_NOT_AVAILABLE");
+    assert_eq!(
+        s, 201,
+        "an empty legacy global quiz is not a student prerequisite: {v}"
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM identity_students")
             .fetch_one(&pool)
             .await
             .unwrap(),
-        0
+        1
     );
 }

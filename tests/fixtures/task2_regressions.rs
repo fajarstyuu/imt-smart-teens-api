@@ -29,6 +29,20 @@ async fn budget_rejection(pool: PgPool, weights: [[&str; 2]; 2]) {
         "budget",
     )
     .await;
+    if weights[1] == ["99999999.9999", "99999999.9999"] {
+        assert_eq!(
+            status, 201,
+            "legacy global quiz score budget is not a registration prerequisite: {body}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM identity_students")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+        return;
+    }
     assert_eq!(
         status, 409,
         "registration must reject unrepresentable content"
@@ -75,7 +89,7 @@ async fn paired_score_budget_rejects_atomically(pool: PgPool) {
     budget_rejection(pool, [["99999999.9999", "99999999.9999"], ["1", "1"]]).await;
 }
 #[sqlx::test(migrations = "./migrations")]
-async fn quiz_score_budget_rejects_atomically(pool: PgPool) {
+async fn legacy_global_quiz_score_budget_does_not_block_enrollment(pool: PgPool) {
     budget_rejection(pool, [["1", "1"], ["99999999.9999", "99999999.9999"]]).await;
 }
 #[sqlx::test(migrations = "./migrations")]
