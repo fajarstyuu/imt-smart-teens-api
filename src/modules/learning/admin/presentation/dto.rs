@@ -1,5 +1,6 @@
 //! Compiler-checked editor allowlists, distinct from core and versioned JSONB storage.
 use super::super::application::{LessonEditor, PathEditor};
+use crate::modules::assessment::lesson_quiz::LessonQuizDraft;
 use crate::transport::http::editor::{VersionDto, version_dto};
 use serde::Serialize;
 use uuid::Uuid;
@@ -15,6 +16,7 @@ pub struct LessonDraftDto {
     title: String,
     description: String,
     sections: Vec<SectionDraftDto>,
+    quiz: Option<LessonQuizDraft>,
 }
 #[derive(Serialize)]
 pub struct LessonEditorDto {
@@ -58,6 +60,7 @@ pub fn editor_dto(l: LessonEditor) -> LessonEditorDto {
         draft: LessonDraftDto {
             title: l.draft.title,
             description: l.draft.description,
+            quiz: l.draft.quiz,
             sections: l
                 .draft
                 .sections

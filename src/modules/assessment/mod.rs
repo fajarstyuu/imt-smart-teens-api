@@ -2,3 +2,4 @@
 pub mod admin;
 pub mod application;
 pub mod domain;
+pub mod lesson_quiz;

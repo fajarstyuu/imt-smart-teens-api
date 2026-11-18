@@ -70,7 +70,7 @@ async fn run_command() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() > 1 {
         bail!(
-            "use serve, migrate, provision-admin, seed-admin, or init-content-config without additional arguments"
+            "use serve, migrate, provision-admin, seed-admin, init-content-config, or init-empty-content without additional arguments"
         );
     }
     let command = args.first().map(String::as_str).unwrap_or("serve");
@@ -80,6 +80,7 @@ async fn run_command() -> Result<()> {
         "provision-admin",
         "seed-admin",
         "init-content-config",
+        "init-empty-content",
     ]
     .contains(&command)
     {
@@ -115,15 +116,19 @@ async fn run_command() -> Result<()> {
     let pool = database::connect(&settings.database)
         .await
         .map_err(|_| anyhow::anyhow!("database connection failed"))?;
-    if command == "init-content-config" {
+    if command == "init-content-config" || command == "init-empty-content" {
         let cms = crate::modules::learning::admin::application::LessonCms::new(Arc::new(
             crate::modules::learning::admin::infrastructure::PgLessonCms::new(pool.clone()),
         ));
-        let result = cms.initialize_development(&settings.environment).await;
+        let result = if command == "init-content-config" {
+            cms.initialize_development(&settings.environment).await
+        } else {
+            cms.initialize_empty_content().await
+        };
         pool.close().await;
         result?;
         tracing::info!(
-            "empty development content configuration initialized; no teaching content or credentials created"
+            "empty content structure initialized; no teaching content or credentials created"
         );
         return Ok(());
     }

@@ -49,7 +49,9 @@ async fn editors_keep_nested_drafts_histories_publication_and_nullable_manifest_
         l,
         &["id", "state", "revision", "position", "draft", "versions"],
     );
-    keys(&l["draft"], &["title", "description", "sections"]);
+    keys(&l["draft"], &["title", "description", "sections", "quiz"]);
+    assert_eq!(l["draft"]["quiz"]["options"].as_array().unwrap().len(), 2);
+    assert!(l["draft"]["quiz"]["correct_option_id"].is_string());
     keys(
         &l["draft"]["sections"][0],
         &["id", "title", "body", "required"],

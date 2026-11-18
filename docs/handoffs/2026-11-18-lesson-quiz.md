@@ -15,3 +15,13 @@
 - Verification: not yet run for this feature. Worker must record baselines and RED→GREEN before claiming implementation.
 - Review: pending; no feature completion or deployment claimed.
 - Parent BE root has an untracked completed-reset handoff outside this worktree; preserve it.
+
+## Luna implementation checkpoint — 2026-11-18
+
+- Status remains `in_progress`; this is not review-ready or accepted.
+- API worktree has local changes for a typed optional lesson quiz draft, publish-time A/B/key validation, forward migration `202611180001_lesson_quiz.sql`, immutable lesson-version quiz persistence, admin editor DTO update, and explicit private `init-empty-content` CLI/use case. The existing development-only `init-content-config` guard remains.
+- API `docs/runtime-contract.md` has a lesson-editor/bootstrap checkpoint section. Student quiz command/report contracts are intentionally not frozen yet.
+- Actual RED→GREEN: new unit tests initially failed to compile because the lesson quiz domain module was absent; then 2/2 passed. A publication-gate assertion failed after temporarily removing its enforcement and passed after restoration (focused file 3/3). The production-like empty bootstrap test failed before CLI support existed, then passed after implementation.
+- Current API source checkpoint full gates: `cargo fmt --all --check` pass; `cargo clippy --all-targets --all-features --locked -- -D warnings` pass; `cargo test --all-targets --locked -- --test-threads=1` pass (78 tests); `cargo build --locked` pass; infrastructure unittest command pass (24 tests). Test URL safely verified as loopback:55432; no env values printed.
+- Current feature worker owns uncommitted API modifications; source HEAD is still `eda1b87df344e38b997a911553efd161b208a252`. No FE source changes or commits yet. Full approved student journey, legacy quiz retirement, detail-only quiz reports, frontend, browser evidence and final gates remain.
+- Next: proceed with Task 2 student mastery UOW/API/report tests-first; preserve current schema compatibility and avoid deployment/live bootstrap.

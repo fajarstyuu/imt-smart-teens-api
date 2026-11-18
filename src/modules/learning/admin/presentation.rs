@@ -48,6 +48,7 @@ struct LessonInput {
     title: String,
     description: String,
     sections: Vec<SectionInput>,
+    quiz: Option<crate::modules::assessment::lesson_quiz::LessonQuizDraft>,
     position: i32,
     expected_revision: Option<i64>,
 }
@@ -56,6 +57,7 @@ impl LessonInput {
         LessonDraft {
             title: self.title,
             description: self.description,
+            quiz: self.quiz,
             sections: self
                 .sections
                 .into_iter()

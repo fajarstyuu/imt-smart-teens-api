@@ -12,7 +12,7 @@ const RELEASE: &str = "/api/v1/admin/learning-path/release";
 async fn setup(pool: &PgPool) -> (axum::Router, String, String, Value) {
     cms::initialize(pool).await;
     let (app, c, t, _) = cms::editor(pool).await;
-    let (s,l,_)=request(&app,"POST","/api/v1/admin/lessons",json!({"title":"Reviewed lesson","description":"","sections":[{"title":"Reviewed lesson","body":"Reviewed body","required":true}],"position":1}),&c,&t).await;
+    let (s,l,_)=request(&app,"POST","/api/v1/admin/lessons",json!({"title":"Reviewed lesson","description":"","sections":[{"title":"Reviewed lesson","body":"Reviewed body","required":true}],"quiz":{"text":"Pertanyaan","options":[{"id":"00000000-0000-0000-0000-000000000001","text":"A"},{"id":"00000000-0000-0000-0000-000000000002","text":"B"}],"correct_option_id":"00000000-0000-0000-0000-000000000001"},"position":1}),&c,&t).await;
     assert_eq!(s, 201, "{l}");
     let (_, bs, _) = request(
         &app,

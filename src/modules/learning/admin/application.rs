@@ -5,7 +5,10 @@ pub use crate::shared::editing::{
     ContentQuery, ContentState, Page, Version, check_revision, revision, text,
 };
 use crate::{
-    modules::identity::{application::AuditActor, domain::Principal},
+    modules::{
+        assessment::lesson_quiz::LessonQuizDraft,
+        identity::{application::AuditActor, domain::Principal},
+    },
     shared::error::{AppError, AppResult},
 };
 use async_trait::async_trait;
@@ -28,6 +31,8 @@ pub struct LessonDraft {
     pub title: String,
     pub description: String,
     pub sections: Vec<SectionDraft>,
+    /// Required before publishing; a draft may omit or leave its key unset while editing.
+    pub quiz: Option<LessonQuizDraft>,
 }
 impl LessonDraft {
     pub fn validate(&self, publishing: bool) -> AppResult<()> {
@@ -43,6 +48,14 @@ impl LessonDraft {
         }
         if self.sections.len() > 100 || (publishing && self.sections.is_empty()) {
             return Err(AppError::Invalid("INVALID_LESSON_SECTIONS"));
+        }
+        if publishing {
+            self.quiz
+                .as_ref()
+                .ok_or(AppError::Invalid("LESSON_QUIZ_REQUIRED"))?
+                .validate(true)?;
+        } else if let Some(quiz) = &self.quiz {
+            quiz.validate(false)?;
         }
         Ok(())
     }
@@ -114,7 +127,12 @@ impl LessonCms {
     pub fn new(store: Arc<dyn LessonStore>) -> Self {
         Self { store }
     }
-    /// No startup or public HTTP caller invokes this private operational use case.
+    /// Explicit private operation for creating only missing empty CMS roots in any environment.
+    /// This does not seed lessons, questions, students, or credentials and is never called at startup.
+    pub async fn initialize_empty_content(&self) -> AppResult<()> {
+        self.store.initialize_empty().await
+    }
+    /// Legacy development-only entry point retained for existing operators and tests.
     pub async fn initialize_development(&self, environment: &str) -> AppResult<()> {
         if environment != "development" {
             return Err(AppError::Forbidden);

@@ -306,7 +306,7 @@ async fn roots(pool: &PgPool) {
     sqlx::query("INSERT INTO learning_path_drafts(id,lesson_ids,paired_bank_id,quiz_bank_id) SELECT $1,'{}',p.id,q.id FROM assessment_banks p,assessment_banks q WHERE p.kind='paired' AND q.kind='quiz'").bind(Uuid::new_v4()).execute(pool).await.unwrap();
 }
 fn lesson(title: &str, position: i32) -> Value {
-    json!({"title":title,"description":"Description","sections":[{"title":"Section","body":"Plain text body","required":true}],"position":position})
+    json!({"title":title,"description":"Description","sections":[{"title":"Section","body":"Plain text body","required":true}],"quiz":{"text":"Pertanyaan","options":[{"id":"00000000-0000-0000-0000-000000000001","text":"A"},{"id":"00000000-0000-0000-0000-000000000002","text":"B"}],"correct_option_id":"00000000-0000-0000-0000-000000000001"},"position":position})
 }
 #[sqlx::test(migrations = "./migrations")]
 async fn explicit_dev_init_is_idempotent_preserves_drafts_and_refuses_production(pool: PgPool) {

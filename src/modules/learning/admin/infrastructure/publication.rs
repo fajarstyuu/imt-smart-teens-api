@@ -81,7 +81,7 @@ impl PathPublicationTransaction for PgPathPublication {
     }
     async fn published_lesson(&mut self, id: Uuid) -> AppResult<Option<PublishedLesson>> {
         let c = &mut *self.tx;
-        let Some(row) = sqlx::query("SELECT l.state,v.id,v.title,v.description FROM learning_lessons l LEFT JOIN LATERAL (SELECT id,title,description FROM learning_lesson_versions WHERE lesson_id=l.id ORDER BY version DESC LIMIT 1) v ON true WHERE l.id=$1")
+        let Some(row) = sqlx::query("SELECT l.state,v.id,v.title,v.description,v.quiz_payload FROM learning_lessons l LEFT JOIN LATERAL (SELECT id,title,description,quiz_payload FROM learning_lesson_versions WHERE lesson_id=l.id ORDER BY version DESC LIMIT 1) v ON true WHERE l.id=$1")
             .bind(id).fetch_optional(&mut *c).await.map_err(failure)? else { return Ok(None); };
         let version: Option<Uuid> = row.try_get("id").map_err(failure)?;
         let rows=sqlx::query("SELECT section_key,title,body,required FROM learning_sections WHERE lesson_version_id=$1 ORDER BY position").bind(version).fetch_all(&mut *c).await.map_err(failure)?;
@@ -105,6 +105,12 @@ impl PathPublicationTransaction for PgPathPublication {
                             title: row.try_get("title").map_err(failure)?,
                             description: row.try_get("description").map_err(failure)?,
                             sections,
+                            quiz: row
+                                .try_get::<Option<serde_json::Value>, _>("quiz_payload")
+                                .map_err(failure)?
+                                .map(serde_json::from_value)
+                                .transpose()
+                                .map_err(|_| AppError::Internal)?,
                         },
                     })
                 })

@@ -32,7 +32,7 @@ pub struct Content {
     pub path: Value,
 }
 pub async fn publish(app: &Router, c: &str, t: &str) -> Content {
-    let (s,l,_)=request(app,"POST","/api/v1/admin/lessons",json!({"title":"Historical lesson","description":"Description","sections":[{"title":"Section","body":"Historical section","required":true}],"position":1}),c,t).await;
+    let (s,l,_)=request(app,"POST","/api/v1/admin/lessons",json!({"title":"Historical lesson","description":"Description","sections":[{"title":"Section","body":"Historical section","required":true}],"quiz":{"text":"Historical quiz","options":[{"id":"00000000-0000-0000-0000-000000000001","text":"Historical A"},{"id":"00000000-0000-0000-0000-000000000002","text":"Historical B"}],"correct_option_id":"00000000-0000-0000-0000-000000000001"},"position":1}),c,t).await;
     assert_eq!(s, 201, "{l}");
     let (s, l, _) = request(
         app,

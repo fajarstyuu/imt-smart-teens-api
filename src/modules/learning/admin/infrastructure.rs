@@ -1,6 +1,7 @@
 //! PostgreSQL editor persistence. Every mutation and its redacted audit commit atomically.
 mod publication;
 use super::application::*;
+use crate::modules::assessment::lesson_quiz::LessonQuizDraft;
 use crate::platform::editor::{audit, versions};
 use crate::{
     modules::identity::application::AuditActor,
@@ -27,6 +28,8 @@ struct DraftV1 {
     title: String,
     description: String,
     sections: Vec<SectionV1>,
+    #[serde(default)]
+    quiz: Option<LessonQuizDraft>,
 }
 #[derive(Serialize, Deserialize)]
 struct SectionV1 {
@@ -50,6 +53,7 @@ fn encode(d: &LessonDraft) -> AppResult<serde_json::Value> {
                 required: s.required,
             })
             .collect(),
+        quiz: d.quiz.clone(),
     })
     .map_err(|_| AppError::Internal)
 }
@@ -61,6 +65,7 @@ fn decode(v: serde_json::Value) -> AppResult<LessonDraft> {
     Ok(LessonDraft {
         title: d.title,
         description: d.description,
+        quiz: d.quiz,
         sections: d
             .sections
             .into_iter()
@@ -321,9 +326,25 @@ async fn publish_in_connection(
     let l = lesson(&mut *c, id, true).await?;
     editable(&l, rev)?;
     l.draft.validate(true)?;
+    let quiz = serde_json::to_value(
+        l.draft
+            .quiz
+            .as_ref()
+            .ok_or(AppError::Invalid("LESSON_QUIZ_REQUIRED"))?,
+    )
+    .map_err(|_| AppError::Internal)?;
     let v = Uuid::new_v4();
     let number = l.versions.first().map_or(1, |v| v.version + 1);
-    sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description) VALUES($1,$2,$3,$4,$5)").bind(v).bind(id).bind(number).bind(&l.draft.title).bind(&l.draft.description).execute(&mut *c).await.map_err(failure)?;
+    sqlx::query("INSERT INTO learning_lesson_versions(id,lesson_id,version,title,description,quiz_payload) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(v)
+        .bind(id)
+        .bind(number)
+        .bind(&l.draft.title)
+        .bind(&l.draft.description)
+        .bind(quiz)
+        .execute(&mut *c)
+        .await
+        .map_err(failure)?;
     for (i, s) in l.draft.sections.iter().enumerate() {
         sqlx::query("INSERT INTO learning_sections(id,lesson_version_id,section_key,position,title,body,required) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(v).bind(s.id).bind(i as i32+1).bind(&s.title).bind(&s.body).bind(s.required).execute(&mut *c).await.map_err(failure)?;
     }

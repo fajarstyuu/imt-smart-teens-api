@@ -293,3 +293,21 @@ python3 -m unittest discover -s tests/infra -p 'test_*.py' -v
 ```
 
 These tests author synthetic content through the real router/PostgreSQL adapters; test-only fixtures are not bootstrap content or an alternative production backend. `cms_workflow` runs CMS publication -> enrollment -> later CMS publications/archive -> full original student completion -> authorized historical reporting, including school rename/archive and exact snapshot/label preservation. There are no501 routes or fixture JSON handlers in the runtime.
+
+## Lesson-linked quiz additions (worker checkpoint)
+
+The lesson editor's `draft` now adds `quiz: LessonQuizDraft|null`:
+
+```text
+LessonQuizDraft = {
+  text: string,
+  options: [{id: uuid, text: string}, {id: uuid, text: string}],
+  correct_option_id: uuid|null
+}
+```
+
+This is an admin-only DTO. It is optional while drafting; provided option IDs must be distinct/non-nil, and any present key must identify one of them. Publishing requires nonblank question and both option texts and exactly one key. Every newly published lesson version stores `quiz_payload` JSONB in the same transaction as its sections and audit; the forward migration leaves older version rows nullable. This change has real PostgreSQL coverage through existing CMS publication tests and unit/domain checks in `tests/lesson_quiz.rs`.
+
+Private operational addition: `imt-smart-teens-backend init-empty-content` runs the existing serialized structural initializer in any configured environment, including production. It creates only missing empty paired/quiz bank roots and a single empty path draft. It is not called on serve; `init-content-config` keeps its development-only guard. The synthetic SQLx test uses an APP_ENV=production subprocess, confirms repeat idempotence, no lesson/version creation, and unchanged admin password hash. This command is not to be run against live production in this implementation.
+
+This is an implementation checkpoint, not the final runtime contract: student quiz reads/answers, mastery prerequisites, measurements, and lesson-quiz result details remain pending; do not infer those DTOs from the legacy quiz-attempt endpoints above.
